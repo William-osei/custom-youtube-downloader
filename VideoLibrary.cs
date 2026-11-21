@@ -151,7 +151,7 @@ namespace CustomYouTubeDownloader
             return MetadataText(video, "channel") ?? MetadataText(video, "uploader") ?? Standalone;
         }
 
-        private static string GetPlaylistId(string originalUrl)
+        internal static string GetPlaylistId(string originalUrl)
         {
             string text = originalUrl.Trim();
             if (text.IndexOf("://", StringComparison.Ordinal) < 0)
@@ -301,6 +301,27 @@ namespace CustomYouTubeDownloader
             string fullPath = Path.GetFullPath(path);
             string volume = Path.GetPathRoot(fullPath);
             return fullPath == volume ? fullPath : fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+
+        internal static string ValidateRetryDestination(string root, string destination)
+        {
+            string basePath = NormalizeRoot(root);
+            string target = NormalizeRoot(destination);
+            if (target.Length > MaximumDestinationLength)
+                throw new ArgumentException("The saved download folder path is too long.");
+            if (String.Equals(basePath, target, StringComparison.OrdinalIgnoreCase))
+                return target;
+
+            string prefix = basePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (!target.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("The saved destination is outside its download folder.");
+            string current = basePath;
+            foreach (string segment in target.Substring(prefix.Length).Split(Path.DirectorySeparatorChar))
+            {
+                current = Path.Combine(current, segment);
+                VerifyDestinationSegment(current);
+            }
+            return target;
         }
 
         private static string SafeFolderName(string label, string fallback, int limit)

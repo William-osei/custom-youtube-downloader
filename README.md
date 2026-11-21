@@ -11,6 +11,12 @@ A Windows desktop app for finding movies and series, saving YouTube videos you h
 
 To download a full playlist, copy the link from the playlist page or its **Share** button. A link to a video inside a playlist still downloads the selected video. You can mix playlists and individual videos in the same batch. The app saves available playlist entries in a folder named after the playlist and numbers their files in playlist order. A custom series name replaces the playlist title. Unavailable entries are counted in **Details**.
 
+## Download history and retries
+
+**History** tracks recent videos that started downloading. Filter to **Saved videos** or **Needs retry**, then select a row to play the file, open its folder, or copy its YouTube link. **Retry video** tries one failed, cancelled, or interrupted video using its original quality, format, subtitle choice, folder, and playlist number. If the downloader still has the matching partial file, it can resume from that file.
+
+History stays on this computer and keeps the most recent 200 finished entries. Videos saved before this feature still appear in **Library**. A saved video stays available even if its subtitle job is interrupted.
+
 ## Find movies and series
 
 Open **Find Movies & Series**, type a title, pick **Movies**, **TV series**, or both, and select a country. In-app results come from [Wikidata](https://www.wikidata.org/), [TVmaze](https://www.tvmaze.com/api), [the Apple storefront](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/), [Internet Archive](https://archive.org/), and YouTube where relevant. Internet Archive and YouTube listings can be clips, trailers, or other related material. A catalog result identifies a title and does not establish streaming availability.
@@ -45,7 +51,7 @@ Use 64-bit Windows with .NET Framework 4.8 and Node.js 22 or later. From PowerSh
 .\build.ps1
 ```
 
-The first script installs the local yt-dlp, FFmpeg, and FFprobe tools. The second adds the optional offline speech model (about 148 MB). It is needed for generating English subtitles from audio. Run **Custom YouTube Downloader.exe** after building and keep `tools` beside it. The repository excludes binaries, downloaded media, and local app settings.
+The first script installs the local yt-dlp, FFmpeg, and FFprobe tools. The second adds the optional offline speech model (about 148 MB). It is needed for generating English subtitles from audio. Run **Custom YouTube Downloader.exe** after building and keep `tools` beside it. The repository excludes binaries, downloaded media, and local app settings, including history and watchlist files.
 
 Private playlists, rentals, and other restricted or unavailable videos may not download. [YouTube terms](https://www.youtube.com/t/terms)
 

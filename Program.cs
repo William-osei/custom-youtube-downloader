@@ -47,11 +47,15 @@ namespace CustomYouTubeDownloader
         private static readonly Color Accent = Color.FromArgb(108, 229, 190);
         private static readonly Color Error = Color.FromArgb(255, 180, 177);
         private static readonly int[] QualityLimits = { 0, 2160, 1440, 1080, 720 };
+        private static readonly string SettingsDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Custom YouTube Downloader");
         [DllImport("shlwapi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
         private static extern int StrCmpLogicalW(string first, string second);
         private readonly AppPreferences preferences;
         private readonly DiscoveryPanel finder;
         private readonly WatchlistPanel watchlist;
+        private readonly DownloadHistoryStore historyStore;
+        private readonly HistoryPanel history;
         private readonly TextBox url = CreateInput("YouTube video link");
         private readonly TextBox folder = CreateInput("Download folder");
         private readonly TextBox category = CreateInput("Category");
@@ -88,15 +92,17 @@ namespace CustomYouTubeDownloader
         private string operationTitle;
         private string savedFile;
         private bool closeAfterDownload;
+        private bool historyWriteFailed;
 
-        internal DownloaderForm() : this(AppPreferences.Load(), new WatchlistStore(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Custom YouTube Downloader")))
+        internal DownloaderForm() : this(AppPreferences.Load(), new WatchlistStore(SettingsDirectory),
+            new DownloadHistoryStore(SettingsDirectory))
         {
         }
 
-        internal DownloaderForm(AppPreferences preferences, WatchlistStore watchlistStore)
+        internal DownloaderForm(AppPreferences preferences, WatchlistStore watchlistStore, DownloadHistoryStore historyStore)
         {
             this.preferences = preferences;
+            this.historyStore = historyStore;
             Text = "Custom YouTube Downloader";
             Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             Font = new Font("Segoe UI", 10);
@@ -155,6 +161,17 @@ namespace CustomYouTubeDownloader
             var watchlistTab = new TabPage("Watchlist") { BackColor = PanelBackground };
             watchlistTab.Controls.Add(watchlist);
             tabs.TabPages.Add(watchlistTab);
+            var historyTab = new TabPage("History") { BackColor = PanelBackground };
+            history = new HistoryPanel(historyStore, RetryVideo, OpenPath);
+            historyTab.Controls.Add(history);
+            tabs.TabPages.Add(historyTab);
+            try { historyStore.RecoverInterrupted(); }
+            catch (Exception ex)
+            {
+                if (!HistoryPanel.IsStorageError(ex))
+                    throw;
+                history.ReportStorageIssue("Couldn’t recover pending history. " + ex.Message);
+            }
             layout.Controls.Add(tabs, 0, 1);
             statusPanel = CreateStatusPanel();
             footer = CreateFooter();
@@ -181,6 +198,8 @@ namespace CustomYouTubeDownloader
                 ScheduleLibraryRefresh();
                 if (tabs.SelectedTab == watchlistTab)
                     watchlist.Reload();
+                if (tabs.SelectedTab == historyTab)
+                    history.Reload();
             };
             search.TextChanged += delegate { ScheduleLibraryRefresh(); };
             searchTimer.Tick += delegate {
@@ -464,6 +483,7 @@ namespace CustomYouTubeDownloader
         private sealed class VideoJob
         {
             public string Url;
+            public string Title;
             public int PlaylistPosition;
             public LibraryDestination Destination;
         }
@@ -507,7 +527,7 @@ namespace CustomYouTubeDownloader
                     foreach (var entry in playlist.Entries)
                     {
                         batch.Videos.Add(new VideoJob {
-                            Url = entry.VideoUrl, PlaylistPosition = entry.Position, Destination = destination
+                            Url = entry.VideoUrl, Title = entry.Title, PlaylistPosition = entry.Position, Destination = destination
                         });
                     }
                 }
@@ -574,6 +594,7 @@ namespace CustomYouTubeDownloader
             int failed = 0;
             int captionFiles = 0;
             int captionWarnings = 0;
+            DownloadHistoryEntry current = null;
             try
             {
                 var batch = await ExpandLinksAsync(links, root, categoryName, seriesName, updates, token);
@@ -583,51 +604,32 @@ namespace CustomYouTubeDownloader
                     token.ThrowIfCancellationRequested();
                     var job = jobs[i];
                     string prefix = jobs.Count == 1 ? "Video" : "Video " + (i + 1) + " of " + jobs.Count;
+                    string canonical = DownloadWorker.NormalizeVideoUrl(job.Url);
+                    string playlistId = VideoLibrary.GetPlaylistId(job.Url);
+                    current = new DownloadHistoryEntry {
+                        Id = Guid.NewGuid().ToString("N"), Url = canonical,
+                        GroupingUrl = playlistId == null ? canonical : canonical + "&list=" + playlistId,
+                        Title = job.Title ?? "YouTube video · " + canonical.Substring(canonical.Length - 11),
+                        StartedUtc = DateTime.UtcNow, State = HistoryState.Running,
+                        Root = root, RequestedCategory = categoryName, RequestedSeries = seriesName,
+                        Destination = job.Destination == null ? null : job.Destination.DirectoryPath,
+                        PlaylistPosition = job.PlaylistPosition, MaxHeight = maxHeight, CompatibleMp4 = mp4, Captions = captionMode
+                    };
                     try
                     {
-                        var destination = job.Destination;
-                        if (destination == null)
-                        {
-                            operationTitle = prefix + " · finding its category and series";
-                            SetStatus(operationTitle, "Preparing a folder for this video.", false);
-                            destination = await VideoLibrary.ChooseDestinationAsync(
-                                ToolsDirectory(), job.Url, root, categoryName, seriesName, updates.Report, token);
-                            if (!String.IsNullOrWhiteSpace(destination.Warning))
-                                operationDetails.Add(prefix + ": " + destination.Warning);
-                        }
-                        operationTitle = prefix + " · downloading";
-                        SetStatus(operationTitle, "Saving to " + destination.Category + " / " + destination.Series, false);
-                        var result = await DownloadWorker.RunAsync(
-                            ToolsDirectory(), job.Url, destination.DirectoryPath, maxHeight, mp4, updates.Report, token, job.PlaylistPosition);
-                        savedFile = result.FilePath;
+                        var result = await DownloadAttemptAsync(current, prefix, updates, token);
                         saved++;
-                        operationDetails.Add("Saved " + Path.GetFileName(savedFile) + " in " + destination.Category + " / " + destination.Series + ".");
+                        captionFiles += result.Count;
+                        if (result.MissingRequested)
+                            captionWarnings++;
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
                     {
                         failed++;
                         operationDetails.Add(prefix + " failed: " + ex.Message);
-                        continue;
                     }
-                    if (captionMode == CaptionMode.None)
-                        continue;
-                    operationTitle = prefix + " · preparing subtitles";
-                    SetStatus(operationTitle, Path.GetFileName(savedFile), false);
-                    try
-                    {
-                        var result = await CaptionWorker.RunAsync(ToolsDirectory(), job.Url, savedFile, captionMode, updates.Report, token);
-                        captionFiles += result.Count;
-                        if (result.MissingRequested)
-                            captionWarnings++;
-                        operationDetails.Add(result.Message);
-                    }
-                    catch (OperationCanceledException) { throw; }
-                    catch (Exception ex)
-                    {
-                        captionWarnings++;
-                        operationDetails.Add(prefix + " subtitle issue: " + ex.Message);
-                    }
+                    current = null;
                 }
 
                 string summary = saved + (saved == 1 ? " video saved" : " videos saved");
@@ -646,7 +648,136 @@ namespace CustomYouTubeDownloader
             }
             catch (OperationCanceledException)
             {
+                if (current != null && current.State == HistoryState.Completed)
+                    saved++;
                 SetStatus("Download cancelled", saved == 0 ? "No videos finished." : saved + " finished video(s) are in your library.", false);
+                FinishProgress(false);
+            }
+            finally
+            {
+                EndOperation();
+                ScheduleLibraryRefresh();
+            }
+        }
+
+        private async Task<CaptionResult> DownloadAttemptAsync(DownloadHistoryEntry entry, string prefix,
+            IProgress<DownloadProgress> updates, CancellationToken token)
+        {
+            RecordAttempt(entry);
+            try
+            {
+                if (String.IsNullOrWhiteSpace(entry.Destination))
+                {
+                    operationTitle = prefix + " · finding its category and series";
+                    SetStatus(operationTitle, "Preparing a folder for this video.", false);
+                    var destination = await VideoLibrary.ChooseDestinationAsync(ToolsDirectory(),
+                        entry.GroupingUrl ?? entry.Url, entry.Root, entry.RequestedCategory, entry.RequestedSeries,
+                        updates.Report, token);
+                    if (!String.IsNullOrWhiteSpace(destination.Warning))
+                        operationDetails.Add(prefix + ": " + destination.Warning);
+                    entry.Destination = destination.DirectoryPath;
+                    RecordAttempt(entry);
+                }
+                string target = VideoLibrary.ValidateRetryDestination(entry.Root, entry.Destination);
+                operationTitle = prefix + " · downloading";
+                SetStatus(operationTitle, "Saving to " + target, false);
+                var result = await DownloadWorker.RunAsync(ToolsDirectory(), entry.Url, target,
+                    entry.MaxHeight, entry.CompatibleMp4, updates.Report, token, entry.PlaylistPosition);
+                savedFile = entry.FilePath = result.FilePath;
+                if (entry.Title.StartsWith("YouTube video · ", StringComparison.Ordinal))
+                    entry.Title = Path.GetFileNameWithoutExtension(savedFile);
+                entry.State = HistoryState.Completed;
+                entry.Note = "Video saved.";
+                operationDetails.Add("Saved " + Path.GetFileName(savedFile) + " in " + target + ".");
+                if (entry.Captions == CaptionMode.None)
+                    return new CaptionResult();
+
+                entry.Note = "Video saved. Subtitles may be incomplete.";
+                RecordAttempt(entry);
+                operationTitle = prefix + " · preparing subtitles";
+                SetStatus(operationTitle, Path.GetFileName(savedFile), false);
+                try
+                {
+                    var captions = await CaptionWorker.RunAsync(ToolsDirectory(), entry.Url, savedFile,
+                        entry.Captions, updates.Report, token);
+                    entry.Note = captions.MissingRequested ? "Video saved. Some requested subtitles were unavailable." :
+                        "Video and requested subtitles saved.";
+                    operationDetails.Add(captions.Message);
+                    return captions;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    entry.Note = "Video saved. Subtitles could not be prepared.";
+                    operationDetails.Add(prefix + " subtitle issue: " + ex.Message);
+                    return new CaptionResult { MissingRequested = true };
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                if (entry.State == HistoryState.Completed)
+                    entry.Note = "Video saved. Subtitle processing was cancelled.";
+                else
+                {
+                    entry.State = HistoryState.Cancelled;
+                    entry.Note = "Cancelled. Retry to try this video again.";
+                }
+                throw;
+            }
+            catch (Exception)
+            {
+                entry.State = HistoryState.Failed;
+                entry.Note = "The video could not be saved. Retry uses the same settings.";
+                throw;
+            }
+            finally { RecordAttempt(entry); }
+        }
+
+        private void RecordAttempt(DownloadHistoryEntry entry)
+        {
+            if (historyWriteFailed)
+                return;
+            try
+            {
+                historyStore.Upsert(entry);
+                if (tabs.SelectedIndex == 4)
+                    history.Reload();
+            }
+            catch (Exception ex)
+            {
+                if (!HistoryPanel.IsStorageError(ex))
+                    throw;
+                historyWriteFailed = true;
+                operationDetails.Add("Couldn’t update download history. " + ex.Message);
+                history.ReportStorageIssue("Couldn’t update download history. " + ex.Message);
+            }
+        }
+
+        private async void RetryVideo(DownloadHistoryEntry entry)
+        {
+            if (activeDownload != null)
+                return;
+            var token = BeginOperation("Retrying video");
+            IProgress<DownloadProgress> updates = new Progress<DownloadProgress>(UpdateProgress);
+            entry.State = HistoryState.Running;
+            entry.StartedUtc = DateTime.UtcNow;
+            entry.FilePath = null;
+            entry.Note = "Retry started.";
+            try
+            {
+                var captions = await DownloadAttemptAsync(entry, "Retry", updates, token);
+                SetStatus("Ready to watch", captions.MissingRequested ? entry.Note : Path.GetFileName(entry.FilePath), false);
+                FinishProgress(true);
+            }
+            catch (OperationCanceledException)
+            {
+                SetStatus("Retry cancelled", entry.Note, false);
+                FinishProgress(entry.State == HistoryState.Completed);
+            }
+            catch (Exception ex)
+            {
+                operationDetails.Add(ex.Message);
+                SetStatus("Couldn’t save this video", ex.Message, true);
                 FinishProgress(false);
             }
             finally
@@ -675,6 +806,7 @@ namespace CustomYouTubeDownloader
         private CancellationToken BeginOperation(string title)
         {
             operationDetails.Clear();
+            historyWriteFailed = false;
             operationTitle = title;
             activeDownload = new CancellationTokenSource();
             SetWorking(true);
@@ -763,12 +895,13 @@ namespace CustomYouTubeDownloader
             showDetails.Enabled = !working && operationDetails.Count > 0;
             openFolder.Enabled = Directory.Exists(folder.Text);
             UpdateLibraryButtons();
+            history.SetBusy(working);
             UpdateStatusVisibility();
         }
 
         private void UpdateStatusVisibility()
         {
-            bool finding = tabs.SelectedIndex >= 2;
+            bool finding = tabs.SelectedIndex == 2 || tabs.SelectedIndex == 3;
             bool showJob = !finding || activeDownload != null;
             statusPanel.Visible = showJob;
             mainLayout.RowStyles[2].Height = showJob ? 86 : 0;
