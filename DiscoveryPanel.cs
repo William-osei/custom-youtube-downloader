@@ -61,8 +61,10 @@ namespace CustomYouTubeDownloader
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             foreach (int height in new[] { 22, 34, 22, 31, 24 })
                 layout.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
-            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            foreach (int height in new[] { 43, 38, 23, 35, 21 })
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 84));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 43));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 16));
+            foreach (int height in new[] { 38, 23, 35, 21 })
                 layout.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
             layout.RowCount = layout.RowStyles.Count;
 
@@ -88,10 +90,11 @@ namespace CustomYouTubeDownloader
             summary.ForeColor = Secondary;
             summary.Text = "Select a result for more information.";
             AddWide(layout, summary, 6);
-            AddWide(layout, DownloaderForm.CreateActions(open, official, add, save), 7);
-            AddWide(layout, DownloaderForm.CreateLabel("Check a streaming service or search the web", TextColor), 8);
-            AddWide(layout, FieldWithButton(service, check, 150), 9);
-            AddWide(layout, DownloaderForm.CreateLabel("Availability varies by country. Service searches open in your browser.", Secondary), 10);
+            layout.SetRowSpan(summary, 2);
+            AddWide(layout, DownloaderForm.CreateActions(open, official, add, save), 8);
+            AddWide(layout, DownloaderForm.CreateLabel("Check a streaming service or search the web", TextColor), 9);
+            AddWide(layout, FieldWithButton(service, check, 150), 10);
+            AddWide(layout, DownloaderForm.CreateLabel("Availability varies by country. Service searches open in your browser.", Secondary), 11);
             Controls.Add(layout);
 
             title.TextChanged += delegate {
@@ -175,7 +178,7 @@ namespace CustomYouTubeDownloader
             results.Columns.Add("Year", 65);
             results.Columns.Add("Type", 100);
             results.Columns.Add("Source", 145);
-            results.Resize += delegate { results.Columns[0].Width = Math.Max(180, results.ClientSize.Width - 335); };
+            DownloadListLayout.FitTitleColumn(results);
             results.SelectedIndexChanged += delegate { UpdateSelection(); };
             results.ItemActivate += delegate { open.PerformClick(); };
         }

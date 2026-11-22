@@ -2,10 +2,20 @@
 
 A Windows desktop app for finding movies and series, saving YouTube videos you have permission to download, and searching your offline library.
 
+## Install or update on Windows
+
+Download the Windows ZIP from [GitHub Releases](https://github.com/William-osei/custom-youtube-downloader/releases/latest) and extract it to a permanent folder. On a first install, use 64-bit Windows with .NET Framework 4.8 and Node.js 22 or later. Run `.\setup-engines.ps1` from PowerShell in the extracted folder. For offline speech translation, also run `.\setup-translation.ps1`.
+
+To update an existing copy, close the app and extract the new ZIP into the same folder, replacing the matching files. Keep the executable, its `.exe.config` file, and the `tools` folder together. The title bar shows the installed version. Choose **Releases** in the app to find updates.
+
+## Use the app
+
 1. Open **Custom YouTube Downloader** from your desktop shortcut or run the executable in this project folder.
 2. Paste a YouTube video, Shorts, or playlist link. For a batch, paste one link per line. Choose a download folder or use **Downloads\Offline Videos**.
 3. Choose the video quality, file format, and subtitle option. Enter a category and series to choose where to group the batch, or leave them blank for automatic folders.
 4. Click **Start downloads**. Open **Library** to search, play a saved video, or find its files. **Details** shows the result of each job.
+
+Maximize the window to use the desktop work area, or press **F11** for full screen. Press **Esc** or **F11** to return to your previous window size. On short displays, scroll inside the tab to reach the remaining controls.
 
 ## Full playlists
 
@@ -53,10 +63,12 @@ Use 64-bit Windows with .NET Framework 4.8 and Node.js 22 or later. From PowerSh
 
 The first script installs the local yt-dlp, FFmpeg, and FFprobe tools. The second adds the optional offline speech model (about 148 MB). It is needed for generating English subtitles from audio. Run **Custom YouTube Downloader.exe** after building and keep `tools` beside it. The repository excludes binaries, downloaded media, and local app settings, including history and watchlist files.
 
+Run `.\test.ps1` to check caption selection and the Windows layout. Run `.\package.ps1` to build the versioned release ZIP under `bin`. Published releases link the Windows download to its tagged source commit.
+
 Private playlists, rentals, and other restricted or unavailable videos may not download. [YouTube terms](https://www.youtube.com/t/terms)
 
 ## App icon
 
-The built-in image generator created `assets/app-icon.png`. The seven-size Windows icon is `assets/app-icon.ico`.
+The built-in image generator created `assets/app-icon.png`. The Windows icon in `assets/app-icon.ico` includes twelve sizes from 16 to 256 pixels, including 20, 28, 40 and 56 pixels for fractional display scales.
 
 > Use case: logo-brand. Create a distinctive Windows desktop app icon for Custom YouTube Downloader. A compact rounded midnight-navy tile holds one bold mint-green downward arrow that ends in a coral-orange film tray. The tray has two simple negative-space perforations to suggest film. Centered symmetrical silhouette, flat vector-like edges with subtle depth, high contrast, fills most of square with a transparent margin. Readable at 16 pixels. No text, no letters, no branding, no YouTube logo, no extra ornaments.

@@ -7,6 +7,29 @@ using System.Windows.Forms;
 
 namespace CustomYouTubeDownloader
 {
+    internal static class DownloadListLayout
+    {
+        internal static void FitTitleColumn(ListView list)
+        {
+            Action fit = delegate {
+                if (!list.IsHandleCreated || list.ClientSize.Width == 0)
+                    return;
+                int available = list.ClientSize.Width - SystemInformation.VerticalScrollBarWidth;
+                for (int i = 1; i < list.Columns.Count; i++)
+                    available -= list.Columns[i].Width;
+                int width = Math.Max(list.Font.Height * 8, available);
+                if (list.Columns[0].Width != width)
+                    list.Columns[0].Width = width;
+            };
+            list.HandleCreated += delegate { fit(); };
+            list.ClientSizeChanged += delegate { fit(); };
+            list.ColumnWidthChanged += delegate(object sender, ColumnWidthChangedEventArgs e) {
+                if (e.ColumnIndex > 0)
+                    fit();
+            };
+        }
+    }
+
     internal sealed class HistoryPanel : UserControl
     {
         private readonly DownloadHistoryStore store;
@@ -56,7 +79,8 @@ namespace CustomYouTubeDownloader
             list.Columns.Add("Status", 116);
             list.Columns.Add("Format", 128);
             list.Columns.Add("Started", 150);
-            list.Resize += delegate { list.Columns[0].Width = Math.Max(180, list.ClientSize.Width - 414); };
+            DownloadListLayout.FitTitleColumn(list);
+            list.ShowItemToolTips = true;
             list.SelectedIndexChanged += delegate { UpdateSelection(); };
             list.ItemActivate += delegate { if (play.Enabled) play.PerformClick(); };
             filter.SelectedIndexChanged += delegate { Render(); };
@@ -148,6 +172,8 @@ namespace CustomYouTubeDownloader
                     var row = new ListViewItem(new[] { entry.Title, Status(entry.State), videoFormat,
                         entry.StartedUtc.ToLocalTime().ToString("g") });
                     row.Tag = entry;
+                    row.ToolTipText = String.IsNullOrWhiteSpace(entry.Note) ? entry.Title :
+                        entry.Title + Environment.NewLine + entry.Note;
                     list.Items.Add(row);
                     if (old != null && old.Id == entry.Id)
                         row.Selected = true;

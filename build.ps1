@@ -21,7 +21,10 @@ $preferencesSource = Join-Path $PSScriptRoot 'AppPreferences.cs'
 $watchlistSource = Join-Path $PSScriptRoot 'Watchlist.cs'
 $historySource = Join-Path $PSScriptRoot 'DownloadHistory.cs'
 $historyPanelSource = Join-Path $PSScriptRoot 'HistoryPanel.cs'
+$identitySource = Join-Path $PSScriptRoot 'AppIdentity.cs'
 $icon = Join-Path $PSScriptRoot 'assets\app-icon.ico'
-& $compiler /nologo /target:winexe /platform:anycpu /optimize+ /codepage:65001 "/out:$output" "/win32icon:$icon" /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll $mainSource $workerSource $captionSource $librarySource $playlistSource $catalogSource $discoverySource $preferencesSource $watchlistSource $historySource $historyPanelSource
+$manifest = Join-Path $PSScriptRoot 'app.manifest'
+& $compiler /nologo /target:winexe /platform:anycpu /optimize+ /codepage:65001 "/out:$output" "/win32icon:$icon" "/win32manifest:$manifest" "/resource:$icon,CustomYouTubeDownloader.AppIcon.ico" /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll $mainSource $workerSource $captionSource $librarySource $playlistSource $catalogSource $discoverySource $preferencesSource $watchlistSource $historySource $historyPanelSource $identitySource
 if ($LASTEXITCODE -ne 0) { throw 'The application could not be built.' }
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'App.config') -Destination "$output.config" -Force
 Get-Item -LiteralPath $output

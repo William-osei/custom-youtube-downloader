@@ -204,7 +204,7 @@ namespace CustomYouTubeDownloader
             list.Columns.Add("Type", 110);
             list.Columns.Add("Source", 135);
             list.Columns.Add("Saved", 103);
-            list.Resize += delegate { list.Columns[0].Width = Math.Max(192, list.ClientSize.Width - 432); };
+            DownloadListLayout.FitTitleColumn(list);
             list.SelectedIndexChanged += delegate { UpdateButtons(); };
             list.ItemActivate += delegate { open.PerformClick(); };
             open.Click += delegate { OpenSelected(); };
