@@ -251,6 +251,8 @@ namespace CustomYouTubeDownloader
         {
             var originalAutos = tracks.Auto.Where(tag => tag.EndsWith("-orig", StringComparison.OrdinalIgnoreCase)).ToList();
             string native = tracks.Language;
+            if (SameLanguage(native, "und"))
+                native = null;
             if (native == null && originalAutos.Count > 0)
                 native = WithoutOriginalSuffix(originalAutos[0]);
             if (native == null)

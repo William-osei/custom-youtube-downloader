@@ -49,6 +49,11 @@ internal static class CaptionSelectionTests
             Require(!result.MissingRequested && result.Count == 1 && !File.Exists(requests),
                 "An original-language auto track should identify the existing file when language is absent.");
 
+            File.WriteAllText(metadata, "{\"language\":\"und\",\"subtitles\":{},\"automatic_captions\":{\"fr-orig\":{}}}");
+            result = Captions(directory, video, CaptionMode.Original);
+            Require(!result.MissingRequested && result.Count == 1 && !File.Exists(requests),
+                "An undetermined audio language should use the original-track marker.");
+
             File.Delete(french);
             File.WriteAllText(metadata, "{\"language\":\"fr\",\"subtitles\":{},\"automatic_captions\":{\"en-orig\":{}}}");
             result = Captions(directory, video, CaptionMode.Original);
