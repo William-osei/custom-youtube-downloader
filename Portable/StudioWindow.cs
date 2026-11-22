@@ -36,7 +36,7 @@ internal sealed partial class StudioWindow : Window
     private readonly TextBlock status = new() { Text = "Ready", TextWrapping = TextWrapping.Wrap, Foreground = Ink, MaxLines = 3, TextTrimming = TextTrimming.CharacterEllipsis };
     private readonly ProgressBar activity = new() { Height = 3, IsIndeterminate = true, IsVisible = false, Foreground = Pine };
     private readonly Button stop = new() { Content = "Cancel", IsVisible = false };
-    private readonly TextBox urls = new() { AcceptsReturn = true, Height = 90, TextWrapping = TextWrapping.Wrap,
+    private readonly TextBox urls = new() { AcceptsReturn = true, Height = 74, TextWrapping = TextWrapping.Wrap,
         Watermark = "Paste a YouTube video or playlist link, one per line" };
     private readonly TextBox folder = new(), category = new() { Watermark = "Automatic" }, series = new() { Watermark = "Automatic" };
     private readonly ComboBox quality = Selector("Best available", "Up to 2160p", "Up to 1440p", "Up to 1080p", "Up to 720p");
@@ -64,7 +64,7 @@ internal sealed partial class StudioWindow : Window
         MinWidth = 680; MinHeight = 480;
         var monitor = Screens.Primary;
         Width = monitor == null ? 1030 : Math.Clamp(monitor.WorkingArea.Width / monitor.Scaling - 24, MinWidth, 1030);
-        Height = monitor == null ? 700 : Math.Clamp(monitor.WorkingArea.Height / monitor.Scaling - 64, MinHeight, 760);
+        Height = monitor == null ? 700 : Math.Clamp(monitor.WorkingArea.Height / monitor.Scaling - 44, MinHeight, 760);
         Background = Paper; Foreground = Ink;
         using (var image = Artwork("app-icon.png")) Icon = new WindowIcon(image);
         using (var image = Artwork("app-icon.png")) iconArtwork = new Bitmap(image);
@@ -243,7 +243,7 @@ internal sealed partial class StudioWindow : Window
     private Control DownloadPage()
     {
         var fields = new StackPanel { Spacing = 13 };
-        var banner = new Panel { Height = 106, ClipToBounds = true, Background = Forest };
+        var banner = new Panel { Height = 88, ClipToBounds = true, Background = Forest };
         banner.Children.Add(new Image { Source = masthead, Stretch = Stretch.UniformToFill });
         banner.Children.Add(new Border { HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center,
             Padding = new Thickness(22, 0), Child = Text("Download studio", 29, Brushes.White, true) });
@@ -265,15 +265,25 @@ internal sealed partial class StudioWindow : Window
         videoSettings.Children.Add(Pair(Field("Quality", quality), Field("Format", format)));
         videoSettings.Children.Add(Pair(Field("Subtitles", captions), Field("Simultaneous downloads", limit)));
         videoSettings.Children.Add(Pair(dub, Field("Audio style", style)));
-        fields.Children.Add(Card(videoSettings));
         var destination = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 8 };
         Place(destination, folder, 0, 0);
         var choose = ActionButton("Choose folder", () => _ = ChooseFolderAsync());
         Place(destination, choose, 1, 0);
         AutomationProperties.SetName(folder, "Download folder");
-        fields.Children.Add(Card(new StackPanel { Spacing = 10, Children = {
-            Text("Download folder", 17, Ink, true), destination, Pair(Field("Category", category), Field("Series", series))
-        } }));
+        var folderCard = Card(new StackPanel { Spacing = 10, Children = {
+            Text("Download folder", 17, Ink, true), destination, Field("Category", category), Field("Series", series)
+        } });
+        var settings = new Grid { ColumnSpacing = 12, RowSpacing = 12, ColumnDefinitions = new ColumnDefinitions("*,*"),
+            RowDefinitions = new RowDefinitions("Auto") };
+        Place(settings, Card(videoSettings), 0, 0); Place(settings, folderCard, 1, 0);
+        settings.SizeChanged += (_, e) => {
+            bool stack = e.NewSize.Width < 720;
+            if (stack == (settings.ColumnDefinitions.Count == 1)) return;
+            settings.ColumnDefinitions = new ColumnDefinitions(stack ? "*" : "*,*");
+            settings.RowDefinitions = new RowDefinitions(stack ? "Auto,Auto" : "Auto");
+            Grid.SetColumn(folderCard, stack ? 0 : 1); Grid.SetRow(folderCard, stack ? 1 : 0);
+        };
+        fields.Children.Add(settings);
         downloadSettings.AddRange(new Control[] { urls, paste, videoSettings, destination, category, series });
         var scroll = new ScrollViewer { Content = fields, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(18, 16, 18, 4) };
