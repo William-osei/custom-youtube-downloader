@@ -25,7 +25,7 @@ $watchlistSource = Join-Path $PSScriptRoot 'Watchlist.cs'
 $historySource = Join-Path $PSScriptRoot 'DownloadHistory.cs'
 $historyPanelSource = Join-Path $PSScriptRoot 'HistoryPanel.cs'
 $identitySource = Join-Path $PSScriptRoot 'AppIdentity.cs'
-$studioSources = @('StudioTheme.cs', 'StudioShell.cs', 'DownloadWorkspace.cs', 'CollectionView.cs', 'EnglishTranscriptEditor.cs') |
+$studioSources = @('StudioTheme.cs', 'StudioShell.cs', 'DownloadWorkspace.cs', 'CollectionView.cs', 'EnglishTranscript.cs', 'EnglishTranscriptEditor.cs', 'Portable\PlatformTools.cs') |
     ForEach-Object { Join-Path $PSScriptRoot $_ }
 $film = Join-Path $PSScriptRoot 'assets\film-reel.jpg'
 $icon = Join-Path $PSScriptRoot 'assets\app-icon.ico'

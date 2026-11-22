@@ -238,14 +238,14 @@ namespace CustomYouTubeDownloader
                 return true;
             string prefix = parent.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
                 + Path.DirectorySeparatorChar;
-            return candidate.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+            return candidate.StartsWith(prefix, PlatformTools.PathComparison);
         }
 
         private static bool MatchesPath(string first, string second)
         {
             return String.Equals(first.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
                 second.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                StringComparison.OrdinalIgnoreCase);
+                PlatformTools.PathComparison);
         }
 
         private static string RequiredPath(string value)
@@ -253,7 +253,7 @@ namespace CustomYouTubeDownloader
             string normalized = value != null && value.Length <= PathLimit ?
                 AppPreferences.NormalizeFolder(value) : null;
             if (normalized == null)
-                throw new ArgumentException("The download history requires a full Windows path.");
+                throw new ArgumentException("The download history requires an absolute path.");
             return normalized;
         }
 

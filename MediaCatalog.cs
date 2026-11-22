@@ -7,6 +7,9 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
+#if PORTABLE
+using System.Net.Http;
+#endif
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -60,11 +63,19 @@ namespace CustomYouTubeDownloader
             @"\b(?:soundtrack|film festival|film series|film franchise|character|season|episode|disambiguation)\b",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
+        private static readonly string UserAgent = "CustomYouTubeDownloader/" +
+            typeof(MediaCatalog).Assembly.GetName().Version.ToString(2) + " (desktop movie and series title search)";
+#if PORTABLE
+        private static readonly HttpClient Http = new HttpClient(new HttpClientHandler {
+            AllowAutoRedirect = false, AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+        });
+#else
         static MediaCatalog()
         {
             // Applications compiled for .NET 4.0 otherwise inherit the legacy SSL 3.0 and TLS 1.0 defaults.
             ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
         }
+#endif
 
         public static async Task<CatalogSearchResult> SearchAsync(string toolsDirectory, string query, CatalogKind kind,
             string countryCode, CancellationToken token)
@@ -253,7 +264,7 @@ namespace CustomYouTubeDownloader
 
         private static CatalogSearchResult SearchYouTube(string toolsDirectory, string query, CancellationToken token)
         {
-            string engine = Path.Combine(toolsDirectory, "yt-dlp.exe");
+            string engine = PlatformTools.Find(toolsDirectory, "yt-dlp");
             if (!File.Exists(engine))
                 throw new InvalidOperationException("YouTube search engine is unavailable.");
             var args = new List<string> {
@@ -288,11 +299,12 @@ namespace CustomYouTubeDownloader
         private static string RunSearchProcess(string engine, string workingDirectory, List<string> args, CancellationToken token)
         {
             using (var process = new Process { StartInfo = new ProcessStartInfo {
-                FileName = engine, WorkingDirectory = workingDirectory, Arguments = DownloadWorker.JoinArguments(args),
+                FileName = engine, WorkingDirectory = workingDirectory,
                 UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true,
                 StandardOutputEncoding = Encoding.UTF8, RedirectStandardError = true
             } })
             {
+                PlatformTools.SetArguments(process.StartInfo, args);
                 token.ThrowIfCancellationRequested();
                 if (!process.Start())
                     throw new InvalidOperationException("YouTube search could not start.");
@@ -325,13 +337,31 @@ namespace CustomYouTubeDownloader
 
         private static object ReadJson(string url, CancellationToken token)
         {
+#if PORTABLE
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+            timeout.CancelAfter(12000);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.UserAgent.ParseAdd(UserAgent);
+            request.Headers.Accept.ParseAdd("application/json");
+            try
+            {
+                using var response = Http.Send(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+                if (response.StatusCode != HttpStatusCode.OK)
+                    throw new InvalidOperationException("The title search did not return a result page.");
+                using var reader = new StreamReader(response.Content.ReadAsStream(timeout.Token), Encoding.UTF8);
+                return ReadJsonBody(reader, timeout.Token);
+            }
+            catch (HttpRequestException ex) { throw new IOException("The title search could not reach this source.", ex); }
+            catch (OperationCanceledException) when (!token.IsCancellationRequested)
+            { throw new InvalidOperationException("This title search timed out."); }
+#else
             var request = (HttpWebRequest)WebRequest.Create(url);
             request.Timeout = 9000;
             request.ReadWriteTimeout = 6000;
             request.AllowAutoRedirect = false;
             request.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
             request.Accept = "application/json";
-            request.UserAgent = "CustomYouTubeDownloader/1.2 (Windows desktop movie and series title search)";
+            request.UserAgent = UserAgent;
             using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(token))
             using (timeout.Token.Register(request.Abort))
             {
@@ -342,21 +372,35 @@ namespace CustomYouTubeDownloader
                 {
                     if (response.StatusCode != HttpStatusCode.OK)
                         throw new InvalidOperationException("The title search did not return a result page.");
-                    var text = new StringBuilder();
-                    char[] segment = new char[8192];
-                    int size;
-                    while ((size = reader.Read(segment, 0, segment.Length)) > 0)
+                    try { return ReadJsonBody(reader, timeout.Token); }
+                    catch (OperationCanceledException)
                     {
                         token.ThrowIfCancellationRequested();
-                        if (timeout.IsCancellationRequested)
-                            throw new InvalidOperationException("This title search timed out.");
-                        if (text.Length + size > MaximumResponseChars)
-                            throw new InvalidOperationException("This source returned too much data.");
-                        text.Append(segment, 0, size);
+                        throw new InvalidOperationException("This title search timed out.");
                     }
-                    return NewSerializer().DeserializeObject(text.ToString());
                 }
             }
+#endif
+        }
+
+        private static object ReadJsonBody(StreamReader reader, CancellationToken token)
+        {
+            var text = new StringBuilder();
+            char[] segment = new char[8192];
+            while (true)
+            {
+                token.ThrowIfCancellationRequested();
+#if PORTABLE
+                int size = reader.ReadAsync(segment.AsMemory(), token).AsTask().GetAwaiter().GetResult();
+#else
+                int size = reader.Read(segment, 0, segment.Length);
+#endif
+                if (size == 0) break;
+                if (text.Length + size > MaximumResponseChars)
+                    throw new InvalidOperationException("This source returned too much data.");
+                text.Append(segment, 0, size);
+            }
+            return NewSerializer().DeserializeObject(text.ToString());
         }
 
         private static JavaScriptSerializer NewSerializer()

@@ -8,7 +8,9 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
+#if !PORTABLE
 using System.Windows.Forms;
+#endif
 
 namespace CustomYouTubeDownloader
 {
@@ -130,7 +132,9 @@ namespace CustomYouTubeDownloader
 
         private static T InLock<T>(Func<T> action)
         {
-            using (var mutex = new Mutex(false, @"Local\CustomYouTubeDownloaderWatchlist"))
+            string name = Path.DirectorySeparatorChar == '/' ? "CustomYouTubeDownloaderWatchlist-" +
+                Environment.UserName.Replace('/', '_') : @"Local\CustomYouTubeDownloaderWatchlist";
+            using (var mutex = new Mutex(false, name))
             {
                 bool acquired = false;
                 try
@@ -169,6 +173,7 @@ namespace CustomYouTubeDownloader
         }
     }
 
+#if !PORTABLE
     internal sealed class WatchlistPanel : UserControl
     {
         private readonly WatchlistStore store;
@@ -306,4 +311,5 @@ namespace CustomYouTubeDownloader
             return ex is IOException || ex is UnauthorizedAccessException || ex is InvalidOperationException || ex is ArgumentException;
         }
     }
+#endif
 }

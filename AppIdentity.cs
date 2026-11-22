@@ -19,7 +19,7 @@ namespace CustomYouTubeDownloader
     internal static class AppIdentity
     {
         internal const string Name = "Custom YouTube Downloader";
-        internal const string Version = "1.3.0";
+        internal const string Version = "1.4.0";
         private const string ReleasesUrl = "https://github.com/William-osei/custom-youtube-downloader/releases";
         internal static readonly Icon Icon = new Icon(typeof(AppIdentity), "AppIcon.ico");
 

@@ -1,0 +1,3 @@
+packaging/*.sh text eol=lf
+packaging/*.py text eol=lf
+.github/workflows/*.yml text eol=lf

@@ -47,8 +47,12 @@ namespace CustomYouTubeDownloader
 
         public static AppPreferences Load()
         {
+#if PORTABLE
+            return Load(PlatformTools.SettingsDirectory);
+#else
             return Load(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "Custom YouTube Downloader"));
+#endif
         }
 
         internal static AppPreferences Load(string directory)
@@ -203,12 +207,19 @@ namespace CustomYouTubeDownloader
         {
             if (String.IsNullOrWhiteSpace(value))
                 return null;
-            string path = value.Trim().Replace('/', '\\');
-            bool drivePath = path.Length >= 3 && Char.IsLetter(path[0]) && path[1] == ':' && path[2] == '\\';
-            bool uncPath = path.StartsWith(@"\\", StringComparison.Ordinal) &&
-                !path.StartsWith(@"\\?\", StringComparison.Ordinal) && !path.StartsWith(@"\\.\", StringComparison.Ordinal);
-            if (!drivePath && !uncPath)
-                return null;
+            string path = value.Trim();
+            if (Path.DirectorySeparatorChar == '/')
+            {
+                if (!path.StartsWith("/", StringComparison.Ordinal)) return null;
+            }
+            else
+            {
+                path = path.Replace('/', '\\');
+                bool drivePath = path.Length >= 3 && Char.IsLetter(path[0]) && path[1] == ':' && path[2] == '\\';
+                bool uncPath = path.StartsWith(@"\\", StringComparison.Ordinal) &&
+                    !path.StartsWith(@"\\?\", StringComparison.Ordinal) && !path.StartsWith(@"\\.\", StringComparison.Ordinal);
+                if (!drivePath && !uncPath) return null;
+            }
             try { return Path.GetFullPath(path); }
             catch (ArgumentException) { return null; }
             catch (IOException) { return null; }

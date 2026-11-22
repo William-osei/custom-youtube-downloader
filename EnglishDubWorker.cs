@@ -6,8 +6,10 @@ using System.Linq;
 using System.Net;
 using System.Security;
 using System.Security.Cryptography;
+#if !PORTABLE
 using System.Speech.AudioFormat;
 using System.Speech.Synthesis;
+#endif
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -61,15 +63,15 @@ namespace CustomYouTubeDownloader
                 throw new InvalidOperationException("Select an original MP4 or MKV video to create English audio.");
             if (!File.Exists(video))
                 throw new FileNotFoundException("The original video could not be found.", video);
-            if (!File.Exists(Path.Combine(tools, "ffmpeg.exe")) || !File.Exists(Path.Combine(tools, "ffprobe.exe")))
-                throw new InvalidOperationException("English audio needs FFmpeg and FFprobe. Run setup-engines.ps1 in the app folder.");
+            if (!File.Exists(PlatformTools.Find(tools, "ffmpeg")) || !File.Exists(PlatformTools.Find(tools, "ffprobe")))
+                throw new InvalidOperationException("English audio needs FFmpeg and FFprobe. " + PlatformTools.DownloadSetup);
             if (RenderSlot.CurrentCount == 0) Report(progress, "Waiting for the English audio renderer…", null);
             await RenderSlot.WaitAsync(token).ConfigureAwait(false);
             try
             {
                 var captions = await CaptionWorker.RunAsync(tools, sourceUrl, video, CaptionMode.English, progress, token).ConfigureAwait(false);
                 if (captions.MissingRequested || captions.Count == 0)
-                    throw new InvalidOperationException(captions.Message + " For translation from speech, run setup-translation.ps1 in the app folder.");
+                    throw new InvalidOperationException(captions.Message + " " + PlatformTools.TranslationSetup);
                 return await Task.Run(() => Render(tools, video, ext, style, progress, token), token).ConfigureAwait(false);
             }
             finally { RenderSlot.Release(); }
@@ -121,7 +123,7 @@ namespace CustomYouTubeDownloader
                     string sub = "s:" + source.Count("subtitle");
                     args.AddRange(new[] { "-c:" + sub, ext == ".mp4" ? "mov_text" : "srt", "-metadata:s:" + sub,
                         "language=eng", "-disposition:" + sub, "0", "-f", ext == ".mp4" ? "mp4" : "matroska", pending });
-                    var result = CaptionWorker.RunProcess(Path.Combine(tools, "ffmpeg.exe"), args, stage, token, null);
+                    var result = CaptionWorker.RunProcess(PlatformTools.Find(tools, "ffmpeg"), args, stage, token, null);
                     if (result.ExitCode != 0 || !IsMatchingDub(Probe(tools, pending, token), source, signature))
                         throw new InvalidOperationException("The English video could not be verified. Check available disk space and retry.");
                     token.ThrowIfCancellationRequested();
@@ -154,12 +156,12 @@ namespace CustomYouTubeDownloader
         {
             var occupied = new HashSet<int>();
             string name = Path.GetFileName(stem);
-            foreach (string candidate in Directory.EnumerateFiles(Path.GetDirectoryName(stem), name + "*" + ext))
+            foreach (string candidate in Directory.EnumerateFiles(Path.GetDirectoryName(stem)))
             {
                 token.ThrowIfCancellationRequested();
                 if (!string.Equals(Path.GetExtension(candidate), ext, StringComparison.OrdinalIgnoreCase)) continue;
                 string file = Path.GetFileNameWithoutExtension(candidate);
-                if (!file.StartsWith(name, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!file.StartsWith(name, PlatformTools.PathComparison)) continue;
                 string tail = file.Substring(name.Length);
                 int number = 1;
                 if (tail.Length != 0 && (!tail.StartsWith(" (", StringComparison.Ordinal) ||
@@ -167,6 +169,7 @@ namespace CustomYouTubeDownloader
                     !int.TryParse(tail.Substring(2, tail.Length - 3), NumberStyles.None, CultureInfo.InvariantCulture, out number) ||
                     number < 2 || tail != " (" + number.ToString(CultureInfo.InvariantCulture) + ")")) continue;
                 occupied.Add(number);
+                if ((File.GetAttributes(candidate) & FileAttributes.ReparsePoint) != 0) continue;
                 try
                 {
                     if (IsMatchingDub(Probe(tools, candidate, token), source, signature))
@@ -177,10 +180,13 @@ namespace CustomYouTubeDownloader
                 }
                 catch (InvalidDataException) { /* A user file may be unrelated or unreadable. */ }
             }
-            int next = 1;
-            while (occupied.Contains(next)) next++;
-            existing = false;
-            return stem + (next == 1 ? "" : " (" + next.ToString(CultureInfo.InvariantCulture) + ")") + ext;
+            for (int next = 1; ; next++)
+            {
+                string target = stem + (next == 1 ? "" : " (" + next.ToString(CultureInfo.InvariantCulture) + ")") + ext;
+                if (occupied.Contains(next) || File.Exists(target) || Directory.Exists(target)) continue;
+                existing = false;
+                return target;
+            }
         }
 
         private sealed class MediaInfo
@@ -212,7 +218,7 @@ namespace CustomYouTubeDownloader
 
         private static MediaInfo Probe(string tools, string path, CancellationToken token)
         {
-            var result = CaptionWorker.RunProcess(Path.Combine(tools, "ffprobe.exe"), new[] {
+            var result = CaptionWorker.RunProcess(PlatformTools.Find(tools, "ffprobe"), new[] {
                 "-v", "error", "-show_entries", "format=duration:format_tags=comment:stream=codec_type:stream_tags=language:stream_disposition=default",
                 "-of", "json", path
             }, tools, token, null);
@@ -460,14 +466,24 @@ namespace CustomYouTubeDownloader
         private static void SpeakTimeline(string tools, string stage, string pcm, List<Cue> cues, double duration,
             NarrationStyle style, Action<DownloadProgress> progress, CancellationToken token)
         {
+#if !PORTABLE
             var format = new SpeechAudioFormatInfo(SampleRate, AudioBitsPerSample.Sixteen, AudioChannel.Mono);
             using (var voice = new SpeechSynthesizer())
+#endif
             using (var output = new FileStream(pcm, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
+#if PORTABLE
+                var narrator = new NativeNarrator(tools, stage, token);
+                Func<string, int, int, byte[]> speak = (text, rate, pitch) =>
+                    TrimSilence(narrator.Speak(text, rate, pitch, token));
+#else
                 var english = voice.GetInstalledVoices().FirstOrDefault(v => v.Enabled && v.VoiceInfo.Culture.TwoLetterISOLanguageName == "en");
                 if (english == null)
                     throw new InvalidOperationException("Install an English Windows desktop speech voice to create English audio.");
                 voice.SelectVoice(english.VoiceInfo.Name);
+                Func<string, int, int, byte[]> speak = (text, rate, pitch) =>
+                    TrimSilence(Synthesize(voice, format, text, rate, pitch, token));
+#endif
                 long total = (long)Math.Round(duration * SampleRate);
                 int previousPercent = -1;
                 var used = new HashSet<Aside>();
@@ -485,11 +501,11 @@ namespace CustomYouTubeDownloader
                     long budget = Math.Min(cue.End + SampleRate * 3 / 2, next) - cue.Start;
                     int baseRate = style == NarrationStyle.Serious ? -1 : 0;
                     int pitch = style == NarrationStyle.Serious ? -9 : 0;
-                    var speech = Synthesize(voice, format, cue.Text, baseRate, pitch, token);
+                    var speech = speak(cue.Text, baseRate, pitch);
                     if (speech.Length > budget * 2)
                     {
                         int rate = Math.Min(6, baseRate + (int)Math.Ceiling(Math.Log(speech.Length / (2.0 * budget)) / Math.Log(1.12)));
-                        speech = Synthesize(voice, format, cue.Text, rate, pitch, token);
+                        speech = speak(cue.Text, rate, pitch);
                     }
                     if (speech.Length > budget * 2)
                         speech = FitSpeech(tools, stage, speech, budget, token);
@@ -502,7 +518,7 @@ namespace CustomYouTubeDownloader
                         Aside beat;
                         string line = SelectAside(cues, i, used, out beat);
                         if (line == null) continue;
-                        var aside = Synthesize(voice, format, "Narrator's aside. " + line, 0, 9, token);
+                        var aside = speak("Narrator's aside. " + line, 0, 9);
                         if (asideAt + aside.Length / 2 + SampleRate / 3 > next) continue;
                         WriteSilence(output, asideAt * 2, token);
                         output.Write(aside, 0, aside.Length);
@@ -514,6 +530,7 @@ namespace CustomYouTubeDownloader
             }
         }
 
+#if !PORTABLE
         private static byte[] Synthesize(SpeechSynthesizer voice, SpeechAudioFormatInfo format, string text, int rate,
             int pitch, CancellationToken token)
         {
@@ -545,21 +562,25 @@ namespace CustomYouTubeDownloader
                     if (error != null) throw new InvalidOperationException("The Windows English voice could not finish.", error);
                 }
                 finally { voice.SpeakCompleted -= completed; voice.SetOutputToNull(); }
-                byte[] bytes = audio.ToArray();
-                // Remove leading/trailing digital silence before fitting speech, so a voice's built-in
-                // sentence pause does not accelerate an otherwise naturally timed line.
-                int start = 0, end = bytes.Length;
-                while (start + 1 < end && bytes[start] == 0 && bytes[start + 1] == 0) start += 2;
-                if (start >= end) throw new InvalidOperationException("The Windows voice produced no speech.");
-                while (end > start + 2 && bytes[end - 2] == 0 && bytes[end - 1] == 0) end -= 2;
-                int padding = 2 * (SampleRate / 80);
-                start = Math.Max(0, start - padding);
-                end = Math.Min(bytes.Length, end + padding);
-                if (start == 0 && end == bytes.Length) return bytes;
-                var trimmed = new byte[end - start];
-                Buffer.BlockCopy(bytes, start, trimmed, 0, trimmed.Length);
-                return trimmed;
+                return audio.ToArray();
             }
+        }
+#endif
+
+        private static byte[] TrimSilence(byte[] bytes)
+        {
+            // A voice's built-in sentence pause should not accelerate an otherwise naturally timed line.
+            int start = 0, end = bytes.Length;
+            while (start + 1 < end && bytes[start] == 0 && bytes[start + 1] == 0) start += 2;
+            if (start >= end) throw new InvalidOperationException("The English voice produced no speech.");
+            while (end > start + 2 && bytes[end - 2] == 0 && bytes[end - 1] == 0) end -= 2;
+            int padding = 2 * (SampleRate / 80);
+            start = Math.Max(0, start - padding);
+            end = Math.Min(bytes.Length, end + padding);
+            if (start == 0 && end == bytes.Length) return bytes;
+            var trimmed = new byte[end - start];
+            Buffer.BlockCopy(bytes, start, trimmed, 0, trimmed.Length);
+            return trimmed;
         }
 
         private static byte[] FitSpeech(string tools, string stage, byte[] speech, long samples, CancellationToken token)
@@ -572,7 +593,7 @@ namespace CustomYouTubeDownloader
             var filters = new List<string>();
             while (factor > 2) { filters.Add("atempo=2"); factor /= 2; }
             filters.Add("atempo=" + factor.ToString("0.000000", CultureInfo.InvariantCulture));
-            var result = CaptionWorker.RunProcess(Path.Combine(tools, "ffmpeg.exe"), new[] {
+            var result = CaptionWorker.RunProcess(PlatformTools.Find(tools, "ffmpeg"), new[] {
                 "-nostdin", "-loglevel", "error", "-y", "-f", "s16le", "-ar", "22050", "-ac", "1", "-i", input,
                 "-af", string.Join(",", filters), "-f", "s16le", output
             }, stage, token, null);

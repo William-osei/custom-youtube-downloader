@@ -106,11 +106,11 @@ namespace CustomYouTubeDownloader
                 throw new ArgumentOutOfRangeException("maxHeight");
 
             string toolPath = Path.GetFullPath(toolsDirectory);
-            string downloader = Path.Combine(toolPath, "yt-dlp.exe");
-            if (!File.Exists(downloader) || !File.Exists(Path.Combine(toolPath, "ffmpeg.exe")) ||
-                !File.Exists(Path.Combine(toolPath, "ffprobe.exe")))
+            string downloader = PlatformTools.Find(toolPath, "yt-dlp");
+            if (!File.Exists(downloader) || !File.Exists(PlatformTools.Find(toolPath, "ffmpeg")) ||
+                !File.Exists(PlatformTools.Find(toolPath, "ffprobe")))
             {
-                throw new InvalidOperationException("Download tools are missing. Run setup-engines.ps1 from the project folder, then retry.");
+                throw new InvalidOperationException("Download tools are missing. " + PlatformTools.DownloadSetup);
             }
 
             string node = FindNode(toolPath);
@@ -121,7 +121,7 @@ namespace CustomYouTubeDownloader
                 throw new ArgumentException("Choose a folder with an absolute path for your downloads.");
 
             string output = Directory.CreateDirectory(Path.GetFullPath(directory)).FullName;
-            int titleLimit = Math.Min(100, 215 - output.Length - 40);
+            int titleLimit = Path.DirectorySeparatorChar == '/' ? 100 : Math.Min(100, 215 - output.Length - 40);
             if (titleLimit < 20)
                 throw new ArgumentException("Choose a download folder with a shorter path.");
 
@@ -132,7 +132,6 @@ namespace CustomYouTubeDownloader
                 StartInfo = new ProcessStartInfo
                 {
                     FileName = downloader,
-                    Arguments = JoinArguments(arguments),
                     WorkingDirectory = toolPath,
                     UseShellExecute = false,
                     CreateNoWindow = true,
@@ -143,6 +142,7 @@ namespace CustomYouTubeDownloader
                 }
             };
 
+            PlatformTools.SetArguments(process.StartInfo, arguments);
             var outputLines = new ConcurrentQueue<string>();
             var errors = new Queue<string>();
             string filepath = null;
@@ -200,7 +200,7 @@ namespace CustomYouTubeDownloader
             string outputPath = output.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             if (resultDirectory == null ||
                 !string.Equals(resultDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                    outputPath, StringComparison.OrdinalIgnoreCase) ||
+                    outputPath, PlatformTools.PathComparison) ||
                 !File.Exists(resultPath) ||
                 !string.Equals(Path.GetExtension(resultPath), compatibleMp4 ? ".mp4" : ".mkv",
                     StringComparison.OrdinalIgnoreCase))
@@ -209,6 +209,8 @@ namespace CustomYouTubeDownloader
             }
 
             var file = new FileInfo(resultPath);
+            if ((file.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidOperationException("The reported download is a link to another file. Choose a different folder.");
             if (file.Length == 0)
                 throw new InvalidOperationException("The finished video is empty. Choose another folder and try again.");
 
@@ -233,7 +235,7 @@ namespace CustomYouTubeDownloader
                 "--socket-timeout", "20", "--retries", "3", "--fragment-retries", "3", "--abort-on-unavailable-fragments",
                 "--encoding", "utf-8",
                 "--no-js-runtimes", "--js-runtimes", "node:" + node,
-                "--ffmpeg-location", toolsDirectory,
+                "--ffmpeg-location", PlatformTools.FfmpegLocation(toolsDirectory),
                 "--paths", output,
                 "--output", filePrefix + "%(title)." + titleLimit.ToString(CultureInfo.InvariantCulture) +
                     "B [%(id)s] [%(height|unknown)sp].%(ext)s",
@@ -252,6 +254,9 @@ namespace CustomYouTubeDownloader
 
         internal static string FindNode(string toolsDirectory)
         {
+#if PORTABLE
+            return PlatformTools.Find(toolsDirectory, "node");
+#else
             var directories = new List<string> { toolsDirectory };
             string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
             if (!string.IsNullOrEmpty(programFiles))
@@ -269,6 +274,7 @@ namespace CustomYouTubeDownloader
                     return node;
             }
             return null;
+#endif
         }
 
         private static void ReadOutput(ConcurrentQueue<string> lines, Queue<string> errors,
@@ -354,6 +360,10 @@ namespace CustomYouTubeDownloader
                 if (process.HasExited)
                     return;
 
+#if PORTABLE
+                process.Kill(true);
+                process.WaitForExit(4000);
+#else
                 var stop = new ProcessStartInfo
                 {
                     FileName = Path.Combine(Environment.SystemDirectory, "taskkill.exe"),
@@ -366,7 +376,9 @@ namespace CustomYouTubeDownloader
                     if (killer != null)
                         killer.WaitForExit(4000);
                 }
+#endif
             }
+            catch (InvalidOperationException) { /* The process exited during termination. */ }
             catch (System.ComponentModel.Win32Exception)
             {
                 // If taskkill is unavailable, still stop the main downloader below.

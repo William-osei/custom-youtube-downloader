@@ -1,6 +1,8 @@
 /tools/
 /bin/
 /obj/
+/Portable/bin/
+/Portable/obj/
 *.exe
 *.exe.config
 *.dll

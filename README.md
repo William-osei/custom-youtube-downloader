@@ -1,6 +1,17 @@
 # Custom YouTube Downloader
 
-A Windows desktop app for finding movies and series, saving YouTube videos you have permission to download, and searching your offline library.
+A desktop app for Windows, Linux and macOS for finding movies and series, saving YouTube videos you have permission to download, and searching your offline library. All three editions share the download, playlist, subtitle, speech-timing and library code.
+
+## Choose a download
+
+| Computer | Release file | How to open it |
+| --- | --- | --- |
+| Windows | `Windows.zip` | Extract it and run **Custom YouTube Downloader.exe**. |
+| Linux desktop (Intel/AMD or ARM64) | `linux-x64.tar.gz` or `linux-arm64.tar.gz` | Extract into a permanent folder and run `./CustomYouTubeDownloader` there. Use `./install-menu.sh` to add the app to your applications menu. |
+| Mac with Apple silicon | `osx-arm64.zip` | Unzip, drag **Custom YouTube Downloader.app** to Applications, and open it. |
+| Intel Mac | `osx-x64.zip` | Use the Intel archive, then open the app from Applications. |
+
+These are filename endings. The Linux and macOS packages include their .NET runtime. To download videos, install yt-dlp, FFmpeg (with FFprobe), and Node.js 22 or newer. Linux narration uses eSpeak NG and macOS uses its built-in English voice. The guide includes setup commands, the optional Whisper model, and instructions for macOS's per-app approval prompt. [Latest release](https://github.com/William-osei/custom-youtube-downloader/releases/latest) · [Linux and macOS setup](packaging/GETTING-STARTED.md)
 
 ## Install or update on Windows
 
@@ -39,11 +50,11 @@ Enable **Add English audio (synthetic voice)** in Download, or select an origina
 
 | Audio style | What you hear |
 | --- | --- |
-| Faithful translation | A Windows English voice reads the timed translation, including names and numbers as written. This is the default. |
+| Faithful translation | An English voice reads the timed translation, including names and numbers as written. This is the default. |
 | Serious storyteller | The same translated dialogue in a lower, more measured voice. |
 | Sarcastic storyteller | The dialogue plus an occasional spoken “Narrator’s aside.” The app recognizes particular story situations and adds a remark only when there is room before the next line. |
 
-Each style creates a separate video. The original soundtrack remains selectable in the player, and the English subtitles contain the translated dialogue. An installed English Windows desktop speech voice is required. Changing a transcript and creating the same style again produces a numbered copy so you can compare versions.
+Each style creates a separate video. The original soundtrack remains selectable in the player, and the English subtitles contain the translated dialogue. The sound of the narrator depends on your operating system's speech engine. Changing a transcript and creating the same style again produces a numbered copy so you can compare versions.
 
 ### Review a translation
 
@@ -76,6 +87,8 @@ New videos go under **download folder → category → series**. Automatic group
 **MKV** keeps the best available video and audio streams without re-encoding. **MP4** selects H.264 video and AAC audio for wider compatibility. The actual resolution depends on the source and the selected format. VLC can play MKV files.
 
 ## Build from a clone
+
+For the Linux and macOS desktop, use the .NET 10 SDK and run `dotnet run --project Portable/Downloader.csproj`. Build a self-contained release for a specific processor with `dotnet publish Portable/Downloader.csproj -c Release -r linux-x64 --self-contained true -o output`. The other supported targets are `linux-arm64`, `osx-arm64`, and `osx-x64`. The package builder accepts that folder through `python packaging/package.py --rid linux-x64 --publish output --version 1.4.0 --output bin` and requires Pillow. Building a Mac package on macOS also requires the system codesign tool.
 
 Use 64-bit Windows with .NET Framework 4.8 and Node.js 22 or later. From PowerShell in the clone, run:
 

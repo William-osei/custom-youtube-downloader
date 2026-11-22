@@ -36,7 +36,7 @@ namespace CustomYouTubeDownloader
     {
         private const string Uncategorized = "Uncategorized";
         private const string Standalone = "Standalone";
-        private const int MaximumDestinationLength = 155;
+        private static readonly int MaximumDestinationLength = Path.DirectorySeparatorChar == '/' ? 800 : 155;
         private const int CategoryLimit = 38;
         private const int SeriesLimit = 60;
 
@@ -49,7 +49,7 @@ namespace CustomYouTubeDownloader
             RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
         private static readonly Lazy<HashSet<string>> CaptionLanguages = new Lazy<HashSet<string>>(GetCaptionLanguages);
         private static readonly HashSet<char> InvalidPathChars =
-            new HashSet<char>(Path.GetInvalidFileNameChars());
+            new HashSet<char>(Path.GetInvalidFileNameChars().Concat("<>:\"/\\|?*"));
         private static readonly Regex ReservedName = new Regex(
             @"\A(?:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[0-9¹²³]|LPT[0-9¹²³])(?:[ .]|\z)",
             RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
@@ -176,7 +176,7 @@ namespace CustomYouTubeDownloader
             bool playlist, CancellationToken token)
         {
             string toolPath = Path.GetFullPath(toolsDirectory);
-            string engine = Path.Combine(toolPath, "yt-dlp.exe");
+            string engine = PlatformTools.Find(toolPath, "yt-dlp");
             if (!File.Exists(engine))
                 return null;
 
@@ -200,7 +200,6 @@ namespace CustomYouTubeDownloader
             using (var process = new Process { StartInfo = new ProcessStartInfo {
                 FileName = engine,
                 WorkingDirectory = toolPath,
-                Arguments = DownloadWorker.JoinArguments(arguments),
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
@@ -208,6 +207,7 @@ namespace CustomYouTubeDownloader
                 RedirectStandardError = true
             } })
             {
+                PlatformTools.SetArguments(process.StartInfo, arguments);
                 try
                 {
                     token.ThrowIfCancellationRequested();
@@ -290,15 +290,9 @@ namespace CustomYouTubeDownloader
 
         internal static string NormalizeRoot(string root)
         {
-            string path = (root ?? "").Trim();
-            if (!Path.IsPathRooted(path) ||
-                (!path.StartsWith(@"\\", StringComparison.Ordinal) &&
-                    (path.Length < 3 || path[1] != ':' || (path[2] != '\\' && path[2] != '/'))) ||
-                path.StartsWith(@"\\.\", StringComparison.Ordinal) ||
-                path.StartsWith(@"\\?\", StringComparison.Ordinal))
+            string fullPath = AppPreferences.NormalizeFolder(root);
+            if (fullPath == null)
                 throw new ArgumentException("Choose a full path for the video library folder.");
-
-            string fullPath = Path.GetFullPath(path);
             string volume = Path.GetPathRoot(fullPath);
             return fullPath == volume ? fullPath : fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         }
@@ -309,11 +303,11 @@ namespace CustomYouTubeDownloader
             string target = NormalizeRoot(destination);
             if (target.Length > MaximumDestinationLength)
                 throw new ArgumentException("The saved download folder path is too long.");
-            if (String.Equals(basePath, target, StringComparison.OrdinalIgnoreCase))
+            if (String.Equals(basePath, target, PlatformTools.PathComparison))
                 return target;
 
             string prefix = basePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            if (!target.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            if (!target.StartsWith(prefix, PlatformTools.PathComparison))
                 throw new ArgumentException("The saved destination is outside its download folder.");
             string current = basePath;
             foreach (string segment in target.Substring(prefix.Length).Split(Path.DirectorySeparatorChar))
@@ -424,7 +418,7 @@ namespace CustomYouTubeDownloader
 
         private static Dictionary<string, CaptionFile> ReadCaptionIndex(FileSystemInfo[] entries, CancellationToken token)
         {
-            var videoStems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var videoStems = new HashSet<string>(PlatformTools.PathComparer);
             foreach (var file in entries.OfType<FileInfo>())
             {
                 token.ThrowIfCancellationRequested();
@@ -432,7 +426,7 @@ namespace CustomYouTubeDownloader
                     videoStems.Add(Path.GetFileNameWithoutExtension(file.Name));
             }
 
-            var captions = new Dictionary<string, CaptionFile>(StringComparer.OrdinalIgnoreCase);
+            var captions = new Dictionary<string, CaptionFile>(PlatformTools.PathComparer);
             foreach (var file in entries.OfType<FileInfo>())
             {
                 token.ThrowIfCancellationRequested();

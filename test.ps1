@@ -12,7 +12,7 @@ try {
     $captions = Join-Path $run 'CaptionSelectionTests.exe'
     & $compiler /nologo /target:exe /codepage:65001 "/out:$captions" /r:System.Web.Extensions.dll `
         (Join-Path $PSScriptRoot 'tests\CaptionSelectionTests.cs') `
-        (Join-Path $PSScriptRoot 'CaptionWorker.cs') (Join-Path $PSScriptRoot 'DownloadWorker.cs')
+        (Join-Path $PSScriptRoot 'CaptionWorker.cs') (Join-Path $PSScriptRoot 'DownloadWorker.cs') (Join-Path $PSScriptRoot 'Portable\PlatformTools.cs')
     if ($LASTEXITCODE -ne 0) { throw 'Caption test compilation failed.' }
     & $captions
     if ($LASTEXITCODE -ne 0) { throw 'Caption selection tests failed.' }

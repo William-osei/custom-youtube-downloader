@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>CustomYouTubeDownloader</AssemblyName>
+    <RootNamespace>CustomYouTubeDownloader</RootNamespace>
+    <Version>1.4.0</Version>
+    <DefineConstants>$(DefineConstants);PORTABLE</DefineConstants>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <DebugType>embedded</DebugType>
+    <PublishSingleFile Condition="$(RuntimeIdentifier.StartsWith('osx-'))">true</PublishSingleFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.23" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.23" />
+    <AvaloniaResource Include="../assets/app-icon.png" Link="Assets/app-icon.png" />
+    <AvaloniaResource Include="../assets/film-reel.jpg" Link="Assets/film-reel.jpg" />
+    <Compile Include="../AppPreferences.cs;../CaptionWorker.cs;../DownloadBatchRunner.cs;../DownloadHistory.cs;../DownloadWorker.cs;../EnglishDubWorker.cs;../EnglishTranscript.cs;../MediaCatalog.cs;../PlaylistWorker.cs;../VideoLibrary.cs;../Watchlist.cs" />
+  </ItemGroup>
+</Project>

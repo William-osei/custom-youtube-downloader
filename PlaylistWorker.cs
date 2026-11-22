@@ -101,9 +101,9 @@ namespace CustomYouTubeDownloader
         private static string ReadMetadata(string toolsDirectory, string url, CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
-            string executable = Path.Combine(toolsDirectory, "yt-dlp.exe");
+            string executable = PlatformTools.Find(toolsDirectory, "yt-dlp");
             if (!File.Exists(executable))
-                throw new InvalidOperationException("Download tools are missing. Run setup-engines.ps1, then retry.");
+                throw new InvalidOperationException("Download tools are missing. " + PlatformTools.DownloadSetup);
 
             var args = new List<string> {
                 "--ignore-config", "--no-plugin-dirs", "--no-cache-dir", "--color", "never",
@@ -120,7 +120,6 @@ namespace CustomYouTubeDownloader
             using (var process = new Process {
                 StartInfo = new ProcessStartInfo {
                     FileName = executable,
-                    Arguments = DownloadWorker.JoinArguments(args),
                     WorkingDirectory = toolsDirectory,
                     UseShellExecute = false,
                     CreateNoWindow = true,
@@ -131,6 +130,7 @@ namespace CustomYouTubeDownloader
                 }
             })
             {
+                PlatformTools.SetArguments(process.StartInfo, args);
                 token.ThrowIfCancellationRequested();
                 if (!process.Start())
                     throw new InvalidOperationException("Couldn’t start the playlist reader.");

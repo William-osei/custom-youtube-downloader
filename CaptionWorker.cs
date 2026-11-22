@@ -133,7 +133,7 @@ namespace CustomYouTubeDownloader
                     {
                         string source = DownloadWorker.NormalizeVideoUrl(videoUrl);
                         string node = DownloadWorker.FindNode(tools);
-                        if (node == null || !File.Exists(Path.Combine(tools, "yt-dlp.exe")))
+                        if (node == null || !File.Exists(PlatformTools.Find(tools, "yt-dlp")))
                             throw new InvalidOperationException("The YouTube caption tools are unavailable.");
 
                         Report(progress, "Looking for YouTube subtitles…", null);
@@ -176,7 +176,7 @@ namespace CustomYouTubeDownloader
                                 continue;
                             if (tag == englishTag && tag != originalTag && !tracks.Manual.Contains(tag) &&
                                 !tag.EndsWith("-orig", StringComparison.OrdinalIgnoreCase) && !IsEnglish(tracks.Language) &&
-                                File.Exists(Path.Combine(tools, "whisper", "ggml-medium-q5_0.bin")))
+                                PlatformTools.EnhancedModel(tools))
                             {
                                 // Keep YouTube's machine translation as a fallback while translating the original dialogue.
                                 translatedYouTubeTrack = staged;
@@ -291,7 +291,7 @@ namespace CustomYouTubeDownloader
             args.AddRange(new[] {
                 "--write-subs", "--write-auto-subs", "--print", "%(.{language,subtitles,automatic_captions})j", "--", source
             });
-            var output = RunProcess(Path.Combine(tools, "yt-dlp.exe"), args, stage, token, null);
+            var output = RunProcess(PlatformTools.Find(tools, "yt-dlp"), args, stage, token, null);
             if (output.ExitCode != 0 || String.IsNullOrWhiteSpace(output.Readout))
                 throw new InvalidOperationException("YouTube did not return a subtitle list.");
 
@@ -391,11 +391,11 @@ namespace CustomYouTubeDownloader
             var args = YouTubeArguments(node);
             args.AddRange(new[] {
                 "--ignore-errors", "--write-subs", "--write-auto-subs", "--sub-langs", String.Join(",", tags),
-                "--sub-format", "vtt/srt/best", "--ffmpeg-location", tools, "--convert-subs", "srt",
+                "--sub-format", "vtt/srt/best", "--ffmpeg-location", PlatformTools.FfmpegLocation(tools), "--convert-subs", "srt",
                 "--output", Path.Combine(stage, "caption.%(ext)s"), "--", source
             });
             Report(progress, "Saving available subtitle tracks…", null);
-            var result = RunProcess(Path.Combine(tools, "yt-dlp.exe"), args, stage, token, null);
+            var result = RunProcess(PlatformTools.Find(tools, "yt-dlp"), args, stage, token, null);
             foreach (string tag in tags)
             {
                 string file = Path.Combine(stage, "caption." + tag + ".srt");
@@ -452,7 +452,7 @@ namespace CustomYouTubeDownloader
 
         private static MediaTrack[] ReadMediaTracks(string tools, string file, CancellationToken token)
         {
-            string probe = Path.Combine(tools, "ffprobe.exe");
+            string probe = PlatformTools.Find(tools, "ffprobe");
             if (File.Exists(probe))
             {
                 try
@@ -502,7 +502,7 @@ namespace CustomYouTubeDownloader
             foreach (var track in tracks)
             {
                 string srt = Path.Combine(stage, "embedded-" + track.index.ToString(CultureInfo.InvariantCulture) + ".srt");
-                var read = RunProcess(Path.Combine(tools, "ffmpeg.exe"), new[] {
+                var read = RunProcess(PlatformTools.Find(tools, "ffmpeg"), new[] {
                     "-nostdin", "-loglevel", "error", "-y", "-i", video, "-map", track.Map, "-c:s", "srt", srt
                 }, stage, token, null);
                 if (read.ExitCode != 0 || !HasCues(srt)) continue;
@@ -552,14 +552,11 @@ namespace CustomYouTubeDownloader
             string explicitLanguage = WhisperLanguage(languageOverride);
             if (!String.IsNullOrWhiteSpace(languageOverride) && explicitLanguage == null)
                 throw new ArgumentException("Choose a supported spoken language for translation.");
-            string whisperHome = Path.Combine(tools, "whisper");
-            string whisper = Path.Combine(whisperHome, "whisper-cli.exe");
-            string model = Path.Combine(whisperHome, "ggml-medium-q5_0.bin");
-            bool enhanced = File.Exists(model);
-            if (!enhanced) model = Path.Combine(whisperHome, "ggml-base.bin");
-            string ffmpeg = Path.Combine(tools, "ffmpeg.exe");
+            string whisper = PlatformTools.Find(tools, "whisper-cli");
+            string model = PlatformTools.WhisperModel(tools);
+            string ffmpeg = PlatformTools.Find(tools, "ffmpeg");
             if (!File.Exists(whisper) || !File.Exists(model))
-                throw new InvalidOperationException("Run setup-translation.ps1 in the app folder to install the offline translator.");
+                throw new InvalidOperationException(PlatformTools.TranslationSetup);
             if (!File.Exists(ffmpeg))
                 throw new InvalidOperationException("FFmpeg is required to read this video’s audio.");
 
@@ -575,12 +572,12 @@ namespace CustomYouTubeDownloader
 
             string language = explicitLanguage ?? WhisperLanguage(track == null ? null : track.Tag("language")) ??
                 WhisperLanguage(sourceLanguage) ?? "auto";
-            string status = enhanced ? "Translating dialogue with Whisper medium…" : "Translating dialogue with Whisper base…";
+            string status = "Translating dialogue with " + Path.GetFileNameWithoutExtension(model) + "…";
             Report(progress, status, null);
             var translated = RunProcess(whisper, new[] {
                 "--model", model, "--file", audio, "--language", language, "--translate", "--beam-size", "8", "--best-of", "8", "--output-srt",
                 "--output-file", captions, "--no-gpu", "--print-progress"
-            }, whisperHome, token, line =>
+            }, Path.GetDirectoryName(whisper), token, line =>
             {
                 var match = WhisperProgress.Match(line);
                 if (match.Success)
@@ -608,12 +605,13 @@ namespace CustomYouTubeDownloader
         {
             using (var process = new Process {
                 StartInfo = new ProcessStartInfo {
-                    FileName = file, Arguments = DownloadWorker.JoinArguments(args), WorkingDirectory = workingDirectory,
+                    FileName = file, WorkingDirectory = workingDirectory,
                     UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
                     StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
                 }
             })
             {
+                PlatformTools.SetArguments(process.StartInfo, args);
                 const int maxReadout = 32 * 1024 * 1024;
                 var readout = new StringBuilder();
                 var lines = new System.Collections.Concurrent.ConcurrentQueue<string>();
