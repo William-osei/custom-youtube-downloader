@@ -88,7 +88,7 @@ New videos go under **download folder → category → series**. Automatic group
 
 ## Build from a clone
 
-For the Linux and macOS desktop, use the .NET 10 SDK and run `dotnet run --project Portable/Downloader.csproj`. Build a self-contained release for a specific processor with `dotnet publish Portable/Downloader.csproj -c Release -r linux-x64 --self-contained true -o output`. The other supported targets are `linux-arm64`, `osx-arm64`, and `osx-x64`. The package builder accepts that folder through `python packaging/package.py --rid linux-x64 --publish output --version 1.4.0 --output bin` and requires Pillow. Building a Mac package on macOS also requires the system codesign tool.
+For the Linux and macOS desktop, use the .NET 10 SDK and run `dotnet run --project Portable/Downloader.csproj`. Build a self-contained release for a specific processor with `dotnet publish Portable/Downloader.csproj -c Release -r linux-x64 --self-contained true -o output`. The other supported targets are `linux-arm64`, `osx-arm64`, and `osx-x64`. The package builder accepts that folder through `python packaging/package.py --rid linux-x64 --publish output --version 1.4.1 --output bin` and requires Pillow. Building a Mac package on macOS also requires the system codesign tool.
 
 Use 64-bit Windows with .NET Framework 4.8 and Node.js 22 or later. From PowerShell in the clone, run:
 
@@ -102,7 +102,9 @@ The first script installs the local yt-dlp, FFmpeg, and FFprobe tools. The secon
 
 Run **Custom YouTube Downloader.exe** after building and keep `tools` beside it. The repository excludes binaries, downloaded media, and local app settings, including history and watchlist files.
 
-Run `.\test.ps1` to check caption selection, transcript editing, keyboard navigation, layouts, overlapping downloads, cancellation and retries. With the media engines and an English voice installed, `.\test.ps1 -Media` also checks real narration, subtitle timing, audio previews and preservation of the original streams. Commit and push each tested update to GitHub. For a new version, set `AppIdentity.Version`, tag the release commit, and publish the Windows ZIP built from that tag with `.\package.ps1`.
+Run `.\test.ps1` to check caption selection, transcript editing, keyboard navigation, layouts, overlapping downloads, cancellation and retries. With the media engines and an English voice installed, `.\test.ps1 -Media` also checks real narration, subtitle timing, audio previews and preservation of the original streams. For a new version, update both `AppIdentity.Version` and `Version` in `Portable/Downloader.csproj`. Tag the release commit and build all five packages from that tag. Use `.\package.ps1` for the Windows ZIP.
+
+To check the published Linux and macOS downloads, open **Actions → Linux and macOS desktop → Run workflow**, choose `main`, and enter the release tag. Each native runner verifies its archive against GitHub's SHA-256 digest, opens all five workspaces and generates a dubbed test video. The Mac runners also open the app through Finder's launch service. Leave the tag empty to build and test the selected branch.
 
 Private playlists, rentals, and other restricted or unavailable videos may not download. [YouTube terms](https://www.youtube.com/t/terms)
 

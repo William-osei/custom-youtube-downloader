@@ -27,9 +27,22 @@ case "$(uname -s)" in
         plutil -lint "$bundle/Contents/Info.plist"
         codesign --verify --deep --strict "$bundle"
         "$app" --smoke-test
-        /usr/bin/open -W -n "$bundle" --args --smoke-test
+        # LaunchServices can return success even when the app's smoke test fails.
+        : >"$scratch/finder.stdout"
+        : >"$scratch/finder.stderr"
+        /usr/bin/open -W -n --stdout "$scratch/finder.stdout" --stderr "$scratch/finder.stderr" "$bundle" --args --smoke-test
+        if ! grep -Fxq 'Opened native window and verified Download, Library, Discover, Watchlist and History.' "$scratch/finder.stdout"; then
+            cat "$scratch/finder.stdout" "$scratch/finder.stderr" >&2
+            printf '%s\n' "The Finder launch did not complete all five workspaces." >&2
+            exit 1
+        fi
         ;;
     *) printf '%s\n' "Run this check on Linux or macOS." >&2; exit 1 ;;
 esac
-"$app" --version
+version=$("$app" --version)
+printf 'App version %s\n' "$version"
+if [ -n "${2:-}" ] && [ "$version" != "$2" ]; then
+    printf 'Expected version %s, got %s\n' "$2" "$version" >&2
+    exit 1
+fi
 "$app" --self-test

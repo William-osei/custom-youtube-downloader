@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -230,12 +231,23 @@ internal sealed partial class StudioWindow : Window
         for (int i = 0; i < pages.Length; i++)
         {
             Navigate(i);
-            await Task.Delay(120);
-            if (content.Content != pages[i] || !IsVisible || pages[i].Bounds.Width < 100 || pages[i].Bounds.Height < 100)
-                throw new InvalidOperationException("The " + Sections[i] + " workspace did not open.");
-            var footer = status.TranslatePoint(new Point(0, status.Bounds.Height), this);
-            if (footer == null || footer.Value.Y > ClientSize.Height + 1)
-                throw new InvalidOperationException("The workspace status is outside the window.");
+            var page = pages[i];
+            var elapsed = Stopwatch.StartNew();
+            while (true)
+            {
+                var footer = status.TranslatePoint(new Point(0, status.Bounds.Height), this);
+                if (content.Content == page && TopLevel.GetTopLevel(page) == this && IsVisible &&
+                    page.IsArrangeValid && page.Bounds.Width >= 100 && page.Bounds.Height >= 100 &&
+                    status.IsArrangeValid && status.Bounds.Height > 0 && footer.HasValue &&
+                    footer.Value.Y >= status.Bounds.Height && footer.Value.Y <= ClientSize.Height + 1)
+                    break;
+
+                if (elapsed.Elapsed >= TimeSpan.FromSeconds(30))
+                    throw new InvalidOperationException(
+                        $"{Sections[i]} did not finish layout within 30 seconds. Page bounds: {page.Bounds}, " +
+                        $"window: {ClientSize}, status bottom: {footer?.Y}.");
+                await Task.Delay(50);
+            }
         }
         Navigate(0);
     }
