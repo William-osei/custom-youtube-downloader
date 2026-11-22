@@ -44,6 +44,7 @@ namespace CustomYouTubeDownloader
         private static readonly Color Secondary = StudioTheme.Muted;
         private static readonly Color Error = Color.FromArgb(155, 49, 43);
         private static readonly int[] QualityLimits = { 0, 2160, 1440, 1080, 720 };
+        private static readonly string[] StyleLabels = { "Faithful translation", "Serious storyteller", "Sarcastic storyteller" };
         private static readonly string SettingsDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Custom YouTube Downloader");
         [DllImport("shlwapi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
@@ -60,6 +61,7 @@ namespace CustomYouTubeDownloader
         private readonly ComboBox quality = CreateSelector("Video quality");
         private readonly ComboBox format = CreateSelector("Video format");
         private readonly ComboBox captions = CreateSelector("Subtitles");
+        private readonly ComboBox audioStyle = CreateStyleSelector();
         private readonly CheckBox englishAudio = new CheckBox {
             Text = "Add English audio (synthetic voice)", AccessibleName = "Add English audio",
             AccessibleDescription = "Create a separate video with a spoken English track and the original audio.",
@@ -94,6 +96,9 @@ namespace CustomYouTubeDownloader
         private readonly Button libraryFolder = CreateButton("Open location", false);
         private readonly Button libraryTranslate = CreateButton("Generate English subtitles", false);
         private readonly Button libraryDub = CreateButton("Create English audio", false);
+        private readonly Button libraryEditEnglish = CreateButton("Edit English text", false);
+        private readonly ComboBox libraryStyle = CreateStyleSelector();
+        private Control libraryStyleRow;
         private readonly Button libraryRefresh = CreateButton("Refresh", false);
         private readonly System.Windows.Forms.Timer searchTimer = new System.Windows.Forms.Timer { Interval = 260 };
         private readonly List<string> operationDetails = new List<string>();
@@ -137,6 +142,21 @@ namespace CustomYouTubeDownloader
             format.SelectedIndex = preferences.Format;
             captions.SelectedIndex = preferences.Captions;
             englishAudio.Checked = preferences.EnglishAudio;
+            audioStyle.SelectedIndex = libraryStyle.SelectedIndex = (int)preferences.AudioStyle;
+            audioStyle.Enabled = englishAudio.Checked;
+            englishAudio.CheckedChanged += delegate {
+                audioStyle.Enabled = englishAudio.Checked && activeDownload == null;
+                UpdateFormatHint();
+            };
+            audioStyle.SelectedIndexChanged += delegate {
+                if (libraryStyle.SelectedIndex != audioStyle.SelectedIndex)
+                    libraryStyle.SelectedIndex = audioStyle.SelectedIndex;
+                UpdateFormatHint();
+            };
+            libraryStyle.SelectedIndexChanged += delegate {
+                if (audioStyle.SelectedIndex != libraryStyle.SelectedIndex)
+                    audioStyle.SelectedIndex = libraryStyle.SelectedIndex;
+            };
             parallelDownloads.Value = preferences.ParallelDownloads;
             url.Multiline = true;
             url.AcceptsReturn = true;
@@ -160,7 +180,7 @@ namespace CustomYouTubeDownloader
             tabs.Dock = DockStyle.Fill;
             tabs.Margin = Padding.Empty;
             var downloadTab = CreateWorkspaceTab("Download", CreateDownloadPanel(), new Size(342, 410));
-            var libraryTab = CreateWorkspaceTab("Library", CreateLibraryPanel(), new Size(350, 270));
+            var libraryTab = CreateWorkspaceTab("Library", CreateLibraryPanel(), new Size(350, 350));
             tabs.TabPages.Add(downloadTab);
             tabs.TabPages.Add(libraryTab);
             watchlist = new WatchlistPanel(watchlistStore, FindWatchlistTitle, delegate { tabs.SelectedIndex = 2; });
@@ -327,6 +347,20 @@ namespace CustomYouTubeDownloader
 
         private CollectionView libraryView;
 
+        internal static string StyleLabel(NarrationStyle style)
+        {
+            return StyleLabels[(int)style];
+        }
+
+        private static ComboBox CreateStyleSelector()
+        {
+            var selector = CreateSelector("English narration style");
+            selector.Items.AddRange(StyleLabels);
+            selector.AccessibleDescription = "Choose faithful English dialogue, a serious narrator, or a narrator with occasional sarcastic remarks.";
+            selector.MaximumSize = new Size(252, 0);
+            return selector;
+        }
+
         private Control CreateLibraryPanel()
         {
             var panel = Grid(2, Padding.Empty);
@@ -336,6 +370,7 @@ namespace CustomYouTubeDownloader
             panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
             panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+            panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             panel.RowCount = panel.RowStyles.Count;
             panel.BackColor = StudioTheme.Canvas;
@@ -359,8 +394,11 @@ namespace CustomYouTubeDownloader
             };
             AddWide(panel, libraryView, 2);
             AddWide(panel, libraryInfo, 3);
-            var actions = CollectionView.RowActions(libraryPlay, libraryFolder, libraryTranslate, libraryDub);
-            AddWide(panel, actions, 4);
+            libraryStyleRow = CreateStyleRow(libraryStyle);
+            libraryStyleRow.Visible = false;
+            AddWide(panel, libraryStyleRow, 4);
+            var actions = CollectionView.RowActions(libraryPlay, libraryFolder, libraryTranslate, libraryEditEnglish, libraryDub);
+            AddWide(panel, actions, 5);
             actions.Visible = false;
             libraryPlay.Click += delegate {
                 var video = SelectedVideo();
@@ -374,6 +412,11 @@ namespace CustomYouTubeDownloader
             };
             libraryTranslate.Click += GenerateEnglishClicked;
             libraryDub.Click += GenerateEnglishClicked;
+            libraryEditEnglish.Click += delegate {
+                var video = SelectedVideo();
+                if (video != null && activeDownload == null)
+                    EnglishTranscriptEditor.ShowFor(this, video.FilePath);
+            };
             libraryRefresh.Click += delegate { RefreshLibrary(); };
             UpdateLibraryButtons();
             return panel;
@@ -413,6 +456,7 @@ namespace CustomYouTubeDownloader
                     library.Items.Clear();
                     library.Groups.Clear();
                     libraryPlay.Parent.Visible = false;
+                    libraryStyleRow.Visible = false;
                     libraryView.ShowMessage("Library unavailable", "Check the download folder or try scanning again.",
                         "Try again", RefreshLibrary);
                     libraryInfo.Text = ex.Message;
@@ -475,6 +519,7 @@ namespace CustomYouTubeDownloader
                 libraryView.ShowMessage("Your library is empty", "Videos saved in your download folder will appear here.",
                     "Start a download", delegate { tabs.SelectedIndex = 0; url.Focus(); });
             libraryPlay.Parent.Visible = videos.Count != 0;
+            libraryStyleRow.Visible = videos.Count != 0;
             libraryInfo.Text = videos.Count == 0 ? "" :
                 videos.Count + (videos.Count == 1 ? " video" : " videos") + " in " + groups.Count + (groups.Count == 1 ? " group" : " groups");
             UpdateLibraryButtons();
@@ -493,6 +538,10 @@ namespace CustomYouTubeDownloader
             libraryFolder.Enabled = selected;
             libraryTranslate.Enabled = selected && activeDownload == null;
             libraryDub.Enabled = selected && activeDownload == null && CanDubVideo(video.FilePath);
+            libraryStyle.Enabled = libraryDub.Enabled;
+            libraryEditEnglish.Enabled = selected && activeDownload == null &&
+                !EnglishDubWorker.IsDub(Path.GetFileNameWithoutExtension(video.FilePath)) &&
+                File.Exists(Path.ChangeExtension(video.FilePath, ".en.srt"));
         }
 
         private static bool CanDubVideo(string file)
@@ -500,7 +549,7 @@ namespace CustomYouTubeDownloader
             var ext = Path.GetExtension(file);
             return (String.Equals(ext, ".mp4", StringComparison.OrdinalIgnoreCase) ||
                     String.Equals(ext, ".mkv", StringComparison.OrdinalIgnoreCase)) &&
-                !Path.GetFileNameWithoutExtension(file).EndsWith(EnglishDubWorker.Suffix, StringComparison.OrdinalIgnoreCase);
+                !EnglishDubWorker.IsDub(Path.GetFileNameWithoutExtension(file));
         }
 
         private async void GenerateEnglishClicked(object sender, EventArgs e)
@@ -518,7 +567,8 @@ namespace CustomYouTubeDownloader
             {
                 if (dub)
                 {
-                    savedFile = await EnglishDubWorker.RunAsync(ToolsDirectory(), null, video.FilePath, updates.Report, token);
+                    savedFile = await EnglishDubWorker.RunAsync(ToolsDirectory(), null, video.FilePath,
+                        (NarrationStyle)libraryStyle.SelectedIndex, updates.Report, token);
                     operationDetails.Add("English audio saved in " + savedFile);
                     SetStatus("English audio ready", Path.GetFileName(savedFile), false);
                     FinishProgress(true);
@@ -753,7 +803,7 @@ namespace CustomYouTubeDownloader
                         Destination = job.Destination == null ? null : job.Destination.DirectoryPath,
                         PlaylistPosition = job.PlaylistPosition, MaxHeight = QualityLimits[quality.SelectedIndex],
                         CompatibleMp4 = format.SelectedIndex == 1, Captions = (CaptionMode)captions.SelectedIndex,
-                        EnglishAudio = englishAudio.Checked
+                        EnglishAudio = englishAudio.Checked, AudioStyle = (NarrationStyle)audioStyle.SelectedIndex
                     });
                 }
 
@@ -913,7 +963,7 @@ namespace CustomYouTubeDownloader
                 {
                     var updates = display.Stage(index, entry.Title, "English audio", Path.GetFileName(sourceFile));
                     string dubbed = await EnglishDubWorker.RunAsync(ToolsDirectory(), entry.Url, sourceFile,
-                        updates.Report, token);
+                        entry.AudioStyle, updates.Report, token);
                     entry.FilePath = savedFile = dubbed;
                     totals.Dubbed++;
                     operationDetails.Add("English audio ready: " + Path.GetFileName(dubbed));
@@ -1134,6 +1184,7 @@ namespace CustomYouTubeDownloader
             format.Enabled = !working;
             captions.Enabled = !working;
             englishAudio.Enabled = !working;
+            audioStyle.Enabled = !working && englishAudio.Checked;
             parallelDownloads.Enabled = !working;
             category.Enabled = !working;
             series.Enabled = !working;
@@ -1259,6 +1310,15 @@ namespace CustomYouTubeDownloader
 
         private void UpdateFormatHint()
         {
+            if (englishAudio.Checked)
+            {
+                switch ((NarrationStyle)audioStyle.SelectedIndex)
+                {
+                    case NarrationStyle.Serious: hint.Text = "A measured voice reads the translated dialogue."; return;
+                    case NarrationStyle.Sarcastic: hint.Text = "Adds occasional dry remarks during pauses in the dialogue."; return;
+                    default: hint.Text = "Reads the English translation in a neutral voice."; return;
+                }
+            }
             hint.Text = format.SelectedIndex == 1
                 ? "Uses H.264 and AAC when available. Some videos offer higher resolutions in MKV."
                 : "Keeps the best available streams at your selected quality.";
@@ -1273,6 +1333,7 @@ namespace CustomYouTubeDownloader
             preferences.Format = format.SelectedIndex;
             preferences.Captions = captions.SelectedIndex;
             preferences.EnglishAudio = englishAudio.Checked;
+            preferences.AudioStyle = (NarrationStyle)audioStyle.SelectedIndex;
             preferences.ParallelDownloads = Decimal.ToInt32(parallelDownloads.Value);
             preferences.Save();
         }

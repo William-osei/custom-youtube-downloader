@@ -40,6 +40,15 @@ try {
     & $layout $application (Join-Path $run 'profile')
     if ($LASTEXITCODE -ne 0) { throw 'Window layout tests failed.' }
 
+    $editor = Join-Path $run 'TranscriptEditorTests.exe'
+    & $compiler /nologo /target:exe /codepage:65001 "/out:$editor" /r:System.Windows.Forms.dll `
+        (Join-Path $PSScriptRoot 'tests\TranscriptEditorTests.cs')
+    if ($LASTEXITCODE -ne 0) { throw 'Transcript editor test compilation failed.' }
+    $editorArgs = @($application, (Join-Path $run 'transcript'))
+    if ($Media) { $editorArgs += $fixtureTools.FullName }
+    & $editor @editorArgs
+    if ($LASTEXITCODE -ne 0) { throw 'Transcript review tests failed.' }
+
     if ($Media) {
         $audioTest = Join-Path $run 'EnglishAudioTests.exe'
         & $compiler /nologo /target:exe /codepage:65001 "/out:$audioTest" /r:System.Web.Extensions.dll `

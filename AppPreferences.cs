@@ -23,6 +23,7 @@ namespace CustomYouTubeDownloader
         public int Format;
         public int Captions;
         public bool EnglishAudio;
+        public NarrationStyle AudioStyle;
         public int ParallelDownloads = DefaultParallelDownloads;
 
         internal const int DefaultParallelDownloads = 3;
@@ -70,6 +71,7 @@ namespace CustomYouTubeDownloader
                 preferences.Quality = ReadIndex(values, "quality", 5, 0);
                 preferences.Format = ReadIndex(values, "format", 2, 0);
                 preferences.Captions = ReadIndex(values, "captions", 4, 1);
+                preferences.AudioStyle = (NarrationStyle)ReadIndex(values, "audioStyle", 3, (int)NarrationStyle.Faithful);
                 object englishAudio;
                 preferences.EnglishAudio = values.TryGetValue("englishAudio", out englishAudio) &&
                     englishAudio is bool && (bool)englishAudio;
@@ -95,6 +97,7 @@ namespace CustomYouTubeDownloader
                         { "format", ValidIndex(Format, 2, 0) },
                         { "captions", ValidIndex(Captions, 4, 1) },
                         { "englishAudio", EnglishAudio },
+                        { "audioStyle", ValidIndex((int)AudioStyle, 3, (int)NarrationStyle.Faithful) },
                         { "parallelDownloads", ValidParallelDownloads(ParallelDownloads) }
                     };
                     Directory.CreateDirectory(settingsDirectory);
@@ -138,7 +141,8 @@ namespace CustomYouTubeDownloader
                 var values = CreateSerializer().DeserializeObject(json) as Dictionary<string, object>;
                 if (values == null || (!values.ContainsKey("folder") && !values.ContainsKey("country") &&
                     !values.ContainsKey("quality") && !values.ContainsKey("format") && !values.ContainsKey("captions") &&
-                    !values.ContainsKey("englishAudio") && !values.ContainsKey("parallelDownloads")))
+                    !values.ContainsKey("englishAudio") && !values.ContainsKey("audioStyle") &&
+                    !values.ContainsKey("parallelDownloads")))
                     return null;
                 return values;
             }

@@ -236,7 +236,10 @@ namespace CustomYouTubeDownloader
             else if (entry.State == HistoryState.Completed && file == null)
                 description.Text = "The saved file has moved or is unavailable.";
             else
-                description.Text = String.IsNullOrWhiteSpace(entry.Note) ? Status(entry.State) : entry.Note;
+            {
+                string note = String.IsNullOrWhiteSpace(entry.Note) ? Status(entry.State) : entry.Note;
+                description.Text = entry.EnglishAudio ? DownloaderForm.StyleLabel(entry.AudioStyle) + " · " + note : note;
+            }
         }
 
         private DownloadHistoryEntry Selected()

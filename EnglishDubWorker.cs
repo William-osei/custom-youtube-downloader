@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Security;
 using System.Security.Cryptography;
 using System.Speech.AudioFormat;
 using System.Speech.Synthesis;
@@ -14,25 +15,49 @@ using System.Web.Script.Serialization;
 
 namespace CustomYouTubeDownloader
 {
+    internal enum NarrationStyle { Faithful, Serious, Sarcastic }
+
     internal static class EnglishDubWorker
     {
         internal const string Suffix = " [English dub]";
+        private static readonly Regex DubEnding = new Regex(
+            @" \[(?:(?:Serious|Sarcastic) English dub|English dub)\](?: \((?:[2-9]|[1-9][0-9]+)\))?$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         private const int SampleRate = 22050;
         private static readonly byte[] Silence = new byte[32768];
         // Translation and voice rendering share the laptop's CPU; downloads can continue independently.
         private static readonly SemaphoreSlim RenderSlot = new SemaphoreSlim(1, 1);
         private static readonly Regex Timing = new Regex(
             @"^(?<start>\d{2,}:[0-5]\d:[0-5]\d[,.]\d{3})\s*-->\s*(?<end>\d{2,}:[0-5]\d:[0-5]\d[,.]\d{3})(?:\s.*)?$");
-        private static readonly Regex Markup = new Regex(@"</?[^>]+>|\{\\[^}]*\}|\[[^\]]*\]|[♪♫]");
+        private static readonly Regex Markup = new Regex(
+            @"</?(?:b|i|u|font|c|v|lang|ruby|rt)(?=[. >])[^>]*>|<\d+:\d{2}(?::\d{2})?[.]\d{3}>|\{\\[^}]*\}|[♪♫]",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        private static readonly Regex SoundCue = new Regex(
+            @"\[(?:(?:(?:soft|upbeat|dramatic|background) )?music(?: playing)?|applause|clapping|cheering|laughter|laughs?|sighs?|gasps?|coughs?|inaudible|indistinct(?: chatter)?|background (?:noise|chatter)|footsteps|phone (?:ringing|rings)|silence|speaking (?:in )?(?:another language|English|French|Spanish|Portuguese|Japanese|Korean|Hindi|Arabic|German|Russian|Mandarin|Italian|Chinese))\]",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         private static readonly Regex Whitespace = new Regex(@"\s+");
 
+        internal static bool IsDub(string stem) { return DubEnding.IsMatch(stem); }
+        internal static string SourceStem(string stem) { return DubEnding.Replace(stem, ""); }
+
+        private static string FileSuffix(NarrationStyle style)
+        {
+            switch (style)
+            {
+                case NarrationStyle.Faithful: return Suffix;
+                case NarrationStyle.Serious: return " [Serious English dub]";
+                case NarrationStyle.Sarcastic: return " [Sarcastic English dub]";
+                default: throw new ArgumentOutOfRangeException("style");
+            }
+        }
+
         internal static async Task<string> RunAsync(string toolsDirectory, string sourceUrl, string videoFile,
-            Action<DownloadProgress> progress, CancellationToken token)
+            NarrationStyle style, Action<DownloadProgress> progress, CancellationToken token)
         {
             string video = Path.GetFullPath(videoFile);
             string tools = Path.GetFullPath(toolsDirectory);
             string ext = Path.GetExtension(video).ToLowerInvariant();
-            if ((ext != ".mkv" && ext != ".mp4") || Path.GetFileNameWithoutExtension(video).EndsWith(Suffix, StringComparison.OrdinalIgnoreCase))
+            if ((ext != ".mkv" && ext != ".mp4") || IsDub(Path.GetFileNameWithoutExtension(video)))
                 throw new InvalidOperationException("Select an original MP4 or MKV video to create English audio.");
             if (!File.Exists(video))
                 throw new FileNotFoundException("The original video could not be found.", video);
@@ -45,16 +70,17 @@ namespace CustomYouTubeDownloader
                 var captions = await CaptionWorker.RunAsync(tools, sourceUrl, video, CaptionMode.English, progress, token).ConfigureAwait(false);
                 if (captions.MissingRequested || captions.Count == 0)
                     throw new InvalidOperationException(captions.Message + " For translation from speech, run setup-translation.ps1 in the app folder.");
-                return await Task.Run(() => Render(tools, video, ext, progress, token), token).ConfigureAwait(false);
+                return await Task.Run(() => Render(tools, video, ext, style, progress, token), token).ConfigureAwait(false);
             }
             finally { RenderSlot.Release(); }
         }
 
-        private static string Render(string tools, string video, string ext, Action<DownloadProgress> progress, CancellationToken token)
+        private static string Render(string tools, string video, string ext, NarrationStyle style,
+            Action<DownloadProgress> progress, CancellationToken token)
         {
             string stem = Path.Combine(Path.GetDirectoryName(video), Path.GetFileNameWithoutExtension(video));
             string captions = stem + ".en.srt";
-            string target = stem + Suffix + ext;
+            string dubStem = stem + FileSuffix(style);
             Report(progress, "Checking the original video and English transcript…", null);
             // Keep the files used for speech and the fingerprint stable through publication.
             using (var input = File.OpenRead(video))
@@ -63,13 +89,10 @@ namespace CustomYouTubeDownloader
                 var source = Probe(tools, video, token);
                 if (source.Count("video") == 0 || source.Count("audio") == 0 || source.Duration <= 0)
                     throw new InvalidDataException("The original file needs a video track, an audio track and a known duration.");
-                string signature = "CYD English dub v1 " + Digest(input, token) + " " + Digest(transcript, token);
-                if (File.Exists(target))
-                {
-                    if (IsMatchingDub(Probe(tools, target, token), source, signature))
-                        return target;
-                    throw new IOException("A different file already uses the English dub name. Rename that file, then retry.");
-                }
+                string signature = "CYD English dub v2 " + style + " " + Digest(input, token) + " " + Digest(transcript, token);
+                bool existing;
+                string target = FindOutput(tools, dubStem, ext, source, signature, token, out existing);
+                if (existing) return target;
 
                 var cues = ReadCues(captions, source.Duration, token);
                 string id = Guid.NewGuid().ToString("N");
@@ -79,7 +102,7 @@ namespace CustomYouTubeDownloader
                 try
                 {
                     string pcm = Path.Combine(stage, "voice.pcm");
-                    SpeakTimeline(tools, stage, pcm, cues, source.Duration, progress, token);
+                    SpeakTimeline(tools, stage, pcm, cues, source.Duration, style, progress, token);
                     Report(progress, "Adding the English voice and preserving the original audio…", null);
                     var args = new List<string> {
                         "-nostdin", "-hide_banner", "-loglevel", "error", "-n", "-i", video,
@@ -87,7 +110,7 @@ namespace CustomYouTubeDownloader
                         "-map", "0:v", "-map", "1:a:0", "-map", "0:a", "-map", "0:s?", "-map", "2:s:0",
                         "-map_metadata", "0", "-map_chapters", "0", "-c", "copy", "-c:a:0", "aac", "-b:a:0", "96k",
                         "-metadata", "comment=" + signature, "-metadata:s:a:0", "language=eng",
-                        "-metadata:s:a:0", "title=English narration", "-metadata:s:a:0", "handler_name=English narration",
+                        "-metadata:s:a:0", "title=English - " + style, "-metadata:s:a:0", "handler_name=English - " + style,
                         "-disposition:a:0", "default+dub"
                     };
                     if (ext == ".mkv") args.AddRange(new[] { "-map", "0:t?" });
@@ -102,7 +125,16 @@ namespace CustomYouTubeDownloader
                     if (result.ExitCode != 0 || !IsMatchingDub(Probe(tools, pending, token), source, signature))
                         throw new InvalidOperationException("The English video could not be verified. Check available disk space and retry.");
                     token.ThrowIfCancellationRequested();
-                    File.Move(pending, target);
+                    for (;;)
+                    {
+                        try { File.Move(pending, target); break; }
+                        catch (IOException)
+                        {
+                            if (!File.Exists(target)) throw;
+                            target = FindOutput(tools, dubStem, ext, source, signature, token, out existing);
+                            if (existing) break;
+                        }
+                    }
                     return target;
                 }
                 finally
@@ -113,6 +145,42 @@ namespace CustomYouTubeDownloader
                     try { Directory.Delete(stage); } catch (IOException) { } catch (UnauthorizedAccessException) { }
                 }
             }
+        }
+
+        // Match a previous render by input, transcript and style. Keep earlier revisions, user files,
+        // and pre-1.3 dubs playable even when a corrected transcript needs the same display name.
+        private static string FindOutput(string tools, string stem, string ext, MediaInfo source, string signature,
+            CancellationToken token, out bool existing)
+        {
+            var occupied = new HashSet<int>();
+            string name = Path.GetFileName(stem);
+            foreach (string candidate in Directory.EnumerateFiles(Path.GetDirectoryName(stem), name + "*" + ext))
+            {
+                token.ThrowIfCancellationRequested();
+                if (!string.Equals(Path.GetExtension(candidate), ext, StringComparison.OrdinalIgnoreCase)) continue;
+                string file = Path.GetFileNameWithoutExtension(candidate);
+                if (!file.StartsWith(name, StringComparison.OrdinalIgnoreCase)) continue;
+                string tail = file.Substring(name.Length);
+                int number = 1;
+                if (tail.Length != 0 && (!tail.StartsWith(" (", StringComparison.Ordinal) ||
+                    !tail.EndsWith(")", StringComparison.Ordinal) || tail.Length < 4 ||
+                    !int.TryParse(tail.Substring(2, tail.Length - 3), NumberStyles.None, CultureInfo.InvariantCulture, out number) ||
+                    number < 2 || tail != " (" + number.ToString(CultureInfo.InvariantCulture) + ")")) continue;
+                occupied.Add(number);
+                try
+                {
+                    if (IsMatchingDub(Probe(tools, candidate, token), source, signature))
+                    {
+                        existing = true;
+                        return candidate;
+                    }
+                }
+                catch (InvalidDataException) { /* A user file may be unrelated or unreadable. */ }
+            }
+            int next = 1;
+            while (occupied.Contains(next)) next++;
+            existing = false;
+            return stem + (next == 1 ? "" : " (" + next.ToString(CultureInfo.InvariantCulture) + ")") + ext;
         }
 
         private sealed class MediaInfo
@@ -207,7 +275,8 @@ namespace CustomYouTubeDownloader
                 var time = Timing.Match(lines[n].Trim());
                 if (!time.Success) throw new InvalidDataException("The English subtitle timing could not be read.");
                 string[] dialogue = lines.Skip(n + 1).Select(line =>
-                    Whitespace.Replace(WebUtility.HtmlDecode(Markup.Replace(line, " ")), " ").Trim())
+                    Whitespace.Replace(SoundCue.Replace(Markup.Replace(WebUtility.HtmlDecode(line), " "), " ")
+                        .Replace("[", "").Replace("]", ""), " ").Trim())
                     .Where(line => line.Length > 0).ToArray();
                 string text = string.Join(" ", dialogue);
                 if (text.Length == 0 || !text.Any(char.IsLetterOrDigit)) continue;
@@ -270,7 +339,23 @@ namespace CustomYouTubeDownloader
                 }
                 merged.Add(cue);
             }
-            return merged;
+            var phrases = new List<Cue>();
+            foreach (var cue in merged)
+            {
+                var prev = phrases.LastOrDefault();
+                // Automatic captions can split a spoken phrase into tiny pieces. Read adjacent
+                // fragments in one breath, keeping sentence boundaries and the surrounding time window.
+                if (prev != null && cue.Start - prev.End < SampleRate / 8 &&
+                    Math.Min(prev.End - prev.Start, cue.End - cue.Start) < 3 * SampleRate / 2 &&
+                    cue.End - prev.Start <= 6 * SampleRate && char.IsLower(cue.Text[0]) &&
+                    char.IsLetterOrDigit(prev.Text[prev.Text.Length - 1]) && !prev.Text.StartsWith("-", StringComparison.Ordinal))
+                {
+                    prev.Text += " " + cue.Text;
+                    prev.End = cue.End;
+                }
+                else phrases.Add(cue);
+            }
+            return phrases;
         }
 
         private static long SampleAt(string timestamp)
@@ -282,8 +367,98 @@ namespace CustomYouTubeDownloader
             return checked((milliseconds * SampleRate + 500) / 1000);
         }
 
+        // Optional asides react to specific story beats in the translated dialogue. They never
+        // replace the speaker's words, and a tightly edited scene can have no asides at all.
+        private sealed class Aside
+        {
+            internal readonly Regex Trigger;
+            internal readonly string Line;
+            internal Aside(string pattern, string line)
+            {
+                Trigger = new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                Line = line;
+            }
+        }
+
+        private static readonly Aside[] StoryBeats = {
+            new Aside(@"\b(?:we|i|they|she|he)(?:'ve|'s| have| has)? (?:just )?missed (?:the|our|my|that|his|her) (?<ride>train|bus|ferry|flight)\b",
+                "How considerate of the {ride} to leave more time for sightseeing."),
+            new Aside(@"\b(?:lost|misplaced|forgot|can't find|cannot find|where (?:are|is))\s+(?:the |our |my |your |his |her )?(?<object>keys?|map|compass|ticket|remote|password)\b",
+                "Apparently the {object} took some personal time."),
+            new Aside(@"\b(?:door (?:is |was )?(?:locked|stuck)|door (?:won't|wouldn't|will not) (?:open|budge))\b",
+                "The door has a very strict guest list."),
+            new Aside(@"\b(?:what could (?:possibly )?go wrong|nothing can (?:possibly )?go wrong)\b",
+                "That sentence has quite a reputation."),
+            new Aside(@"\b(?:take|took|found|know) (?:a |the |this )shortcut\b",
+                "A shortcut. Geography's favorite little sales pitch."),
+            new Aside(@"\b(?:trust me on this|i have a (?:brilliant |cunning |foolproof )plan)\b",
+                "Confidence has volunteered as the first piece of evidence."),
+            new Aside(@"\b(?:battery (?:is |was )?(?:dead|flat)|(?:phone|laptop) (?:is )?out of (?:power|battery))\b",
+                "A masterclass in choosing when to switch off."),
+            new Aside(@"\b(?:set off|triggered|tripped) (?:the |an? )?alarm\b",
+                "So much for making a quiet entrance."),
+            new Aside(@"\b(?:cake|toast|pie) (?:is |was )?(?:burnt|burned)|\b(?:burnt|burned) the (?:cake|toast|pie)\b",
+                "The recipe did leave some room for interpretation."),
+            new Aside(@"\b(?:waited|(?:been )?waiting|stood in line) for (?:an hour|hours|ages|ever)\b",
+                "The waiting certainly got its money's worth."),
+            new Aside(@"\b(?:back of the (?:line|queue)|(?:stuck|standing|waiting) in (?:the|a|this) (?:line|queue)|(?:a long|an enormous) queue)\b",
+                "A fine opportunity to study the back of somebody's coat."),
+            new Aside(@"\b(?:wrong turn(?:ing)?|(?:going|heading|driving|headed) (?:in )?the wrong (?:way|direction))\b",
+                "At least the scenic route has found its audience."),
+            new Aside(@"\b(?<ride>train|bus|ferry|flight)(?:'s| is| was| has been| got)? (?:delayed|running late)\b",
+                "The {ride} seems to regard the timetable as a suggestion."),
+            new Aside(@"\b(?:try|tried|trying|attempt(?:ed)?) (?:it |again )?(?:for )?(?:a |the )?(?<attempt>third|fourth|fifth|sixth|seventh|eighth|ninth|tenth) time\b|\b(?:the |our |my )(?<attempt>third|fourth|fifth|sixth|seventh|eighth|ninth|tenth) (?:attempt|try)\b",
+                "Apparently the {attempt} attempt gets a speaking part."),
+            new Aside(@"\b(?:so much for (?:the|that) (?:forecast|sunshine)|(?:just then |and now |of course,? )it (?:started|starts|began|begins) (?:raining|to rain))\b",
+                "The weather appears to have revised the script."),
+            new Aside(@"\b(?:awkward silence|(?:nobody|no one) (?:said|says) a word|you could hear a pin drop)\b",
+                "The silence is really carrying this conversation."),
+            new Aside(@"\b(?:only |all )?(?:we|i|you) (?:only )?have (?:only )?(?<amount>(?:\d{1,2}|two|three|four|five|ten|fifteen|twenty|thirty|forty(?:-five)?) (?:minutes|seconds)) (?:left|to (?:spare|go|get|finish|make|pack|catch))\b",
+                "Apparently {amount} now counts as a generous schedule."),
+            new Aside(@"\b(?:what(?:'s| is) plan b|(?:we |i )?need (?:a )?plan b|time for plan b)\b",
+                "A warm welcome to the understudy."),
+            new Aside(@"\b(?:this|it|that) was supposed to be (?:easy|simple|quick)\b",
+                "The word supposed is putting in quite a shift."),
+            new Aside(@"\b(?:on the count of three|when i count to three)\b",
+                "At last, a plan with a number attached."),
+            new Aside(@"\b(?:try turning it off and on|turn it off and (?:back )?on again|have you tried restarting it)\b",
+                "Technology's oldest bedtime story."),
+            new Aside(@"\b(?:left|forgot) (?:my|our|the) umbrella\b",
+                "The umbrella chose an excellent day to stay home.")
+        };
+        private static readonly Regex Sensitive = new Regex(
+            @"\b(?:death|dead|die[ds]?|dying|killed|murder\w*|suicid\w*|grief|funeral|hospital\w*|injur\w*|cancer|abuse[ds]?|assault\w*|victim\w*|attack\w*|shoot\w*|gun|hostage\w*|war|emergency|mourning|missing child|accident|ambulance|evacuat\w*|disaster|refugee\w*|bomb|danger|bleeding|earthquake|tornado)\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        private static string SelectAside(List<Cue> cues, int index, HashSet<Aside> used, out Aside selected)
+        {
+            selected = null;
+            var cue = cues[index];
+            // A sentence may cross a subtitle break ("The train is" / "running late").
+            string prefix = index > 0 && cue.Start - cues[index - 1].End < SampleRate &&
+                !Regex.IsMatch(cues[index - 1].Text, @"[.!?][""']?$") ? cues[index - 1].Text + " " : "";
+            string line = (prefix + cue.Text).Replace('’', '\'');
+            foreach (var beat in StoryBeats)
+            {
+                if (used.Contains(beat)) continue;
+                var match = beat.Trigger.Match(line);
+                if (!match.Success || match.Index + match.Length <= prefix.Length) continue;
+                long vicinity = 20 * SampleRate;
+                for (int i = index; i >= 0 && cues[i].End >= cue.Start - vicinity; i--)
+                    if (Sensitive.IsMatch(cues[i].Text)) return null;
+                for (int i = index + 1; i < cues.Count && cues[i].Start <= cue.End + vicinity; i++)
+                    if (Sensitive.IsMatch(cues[i].Text)) return null;
+                selected = beat;
+                return beat.Line.Replace("{object}", match.Groups["object"].Value.ToLowerInvariant())
+                    .Replace("{ride}", match.Groups["ride"].Value.ToLowerInvariant())
+                    .Replace("{attempt}", match.Groups["attempt"].Value.ToLowerInvariant())
+                    .Replace("{amount}", match.Groups["amount"].Value.ToLowerInvariant());
+            }
+            return null;
+        }
+
         private static void SpeakTimeline(string tools, string stage, string pcm, List<Cue> cues, double duration,
-            Action<DownloadProgress> progress, CancellationToken token)
+            NarrationStyle style, Action<DownloadProgress> progress, CancellationToken token)
         {
             var format = new SpeechAudioFormatInfo(SampleRate, AudioBitsPerSample.Sixteen, AudioChannel.Mono);
             using (var voice = new SpeechSynthesizer())
@@ -295,6 +470,8 @@ namespace CustomYouTubeDownloader
                 voice.SelectVoice(english.VoiceInfo.Name);
                 long total = (long)Math.Round(duration * SampleRate);
                 int previousPercent = -1;
+                var used = new HashSet<Aside>();
+                long nextAside = 0;
                 for (int i = 0; i < cues.Count; i++)
                 {
                     token.ThrowIfCancellationRequested();
@@ -303,25 +480,42 @@ namespace CustomYouTubeDownloader
                     if (percent != previousPercent)
                         Report(progress, "Speaking English dialogue (" + (i + 1) + " of " + cues.Count + ")…", percent);
                     previousPercent = percent;
-                    // Allow up to 250 ms of natural pause after a subtitle, never beyond the next cue or the video end.
+                    // Spend a little available silence on clear speech before speeding up dense text.
                     long next = i + 1 < cues.Count ? cues[i + 1].Start : total;
-                    long budget = Math.Min(cue.End + SampleRate / 4, next) - cue.Start;
-                    var speech = Synthesize(voice, format, cue.Text, 0, token);
+                    long budget = Math.Min(cue.End + SampleRate * 3 / 2, next) - cue.Start;
+                    int baseRate = style == NarrationStyle.Serious ? -1 : 0;
+                    int pitch = style == NarrationStyle.Serious ? -9 : 0;
+                    var speech = Synthesize(voice, format, cue.Text, baseRate, pitch, token);
                     if (speech.Length > budget * 2)
                     {
-                        int rate = Math.Min(10, (int)Math.Ceiling(Math.Log(speech.Length / (2.0 * budget)) / Math.Log(1.12)));
-                        speech = Synthesize(voice, format, cue.Text, rate, token);
+                        int rate = Math.Min(6, baseRate + (int)Math.Ceiling(Math.Log(speech.Length / (2.0 * budget)) / Math.Log(1.12)));
+                        speech = Synthesize(voice, format, cue.Text, rate, pitch, token);
                     }
                     if (speech.Length > budget * 2)
                         speech = FitSpeech(tools, stage, speech, budget, token);
                     WriteSilence(output, cue.Start * 2, token);
                     output.Write(speech, 0, speech.Length);
+
+                    long asideAt = Math.Max(cue.End, output.Position / 2) + SampleRate / 3;
+                    if (style == NarrationStyle.Sarcastic && asideAt >= nextAside && next - asideAt >= 3 * SampleRate)
+                    {
+                        Aside beat;
+                        string line = SelectAside(cues, i, used, out beat);
+                        if (line == null) continue;
+                        var aside = Synthesize(voice, format, "Narrator's aside. " + line, 0, 9, token);
+                        if (asideAt + aside.Length / 2 + SampleRate / 3 > next) continue;
+                        WriteSilence(output, asideAt * 2, token);
+                        output.Write(aside, 0, aside.Length);
+                        used.Add(beat);
+                        nextAside = asideAt + aside.Length / 2 + 45L * SampleRate;
+                    }
                 }
                 WriteSilence(output, total * 2, token);
             }
         }
 
-        private static byte[] Synthesize(SpeechSynthesizer voice, SpeechAudioFormatInfo format, string text, int rate, CancellationToken token)
+        private static byte[] Synthesize(SpeechSynthesizer voice, SpeechAudioFormatInfo format, string text, int rate,
+            int pitch, CancellationToken token)
         {
             using (var audio = new MemoryStream())
             using (var done = new ManualResetEvent(false))
@@ -333,7 +527,15 @@ namespace CustomYouTubeDownloader
                 voice.SpeakCompleted += completed;
                 try
                 {
-                    voice.SpeakAsync(text);
+                    if (pitch == 0) voice.SpeakAsync(text);
+                    else
+                    {
+                        string pitchValue = pitch.ToString("+0;-0;0", CultureInfo.InvariantCulture) + "%";
+                        string prompt = "<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"" +
+                            voice.Voice.Culture.Name + "\"><prosody pitch=\"" + pitchValue + "\">" +
+                            SecurityElement.Escape(text) + "</prosody></speak>";
+                        voice.SpeakSsmlAsync(prompt);
+                    }
                     if (WaitHandle.WaitAny(new[] { done, token.WaitHandle }) == 1)
                     {
                         voice.SpeakAsyncCancelAll();

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -43,6 +44,53 @@ namespace CustomYouTubeDownloader
             return Task.Run(() => Run(Path.GetFullPath(toolsDirectory), videoUrl, videoFile, mode, progress, token), token);
         }
 
+        // Only the explicit editor action regenerates a valid transcript. A normal download reuses it.
+        internal static Task<CaptionResult> RetranslateEnglishAsync(string toolsDirectory, string videoFile,
+            Action<DownloadProgress> progress, CancellationToken token, string languageOverride = null)
+        {
+            return Task.Run(() =>
+            {
+                string video = Path.GetFullPath(videoFile);
+                string destination = Path.ChangeExtension(video, ".en.srt");
+                string previous = FileDigest(destination);
+                string stage = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "cyd-captions-" + Guid.NewGuid().ToString("N"))).FullName;
+                string pending = Path.Combine(Path.GetDirectoryName(video), ".cyd-" + Guid.NewGuid().ToString("N") + ".tmp");
+                try
+                {
+                    string tools = Path.GetFullPath(toolsDirectory);
+                    var audio = SelectAudio(ReadMediaTracks(tools, video, token));
+                    File.Copy(MakeEnglish(tools, video, stage, audio, null, progress, token, languageOverride), pending);
+                    token.ThrowIfCancellationRequested();
+                    if (FileDigest(destination) != previous)
+                        throw new IOException("The English transcript changed during translation. Reopen it to review your edits.");
+                    string message = "English transcript regenerated from the video.";
+                    if (previous == null)
+                        File.Move(pending, destination);
+                    else
+                    {
+                        string backup = Path.Combine(Path.GetDirectoryName(video), Path.GetFileNameWithoutExtension(video) +
+                            ".en.previous-" + Guid.NewGuid().ToString("N").Substring(0, 12) + ".srt");
+                        File.Replace(pending, destination, backup);
+                        message += " Previous transcript saved as " + Path.GetFileName(backup) + ".";
+                    }
+                    return new CaptionResult { Count = 1, Message = message };
+                }
+                finally
+                {
+                    TryDeleteFile(pending);
+                    DeleteStageFiles(stage);
+                }
+            }, token);
+        }
+
+        private static string FileDigest(string path)
+        {
+            if (!File.Exists(path)) return null;
+            using (var file = File.OpenRead(path))
+            using (var sha = SHA256.Create())
+                return Convert.ToBase64String(sha.ComputeHash(file));
+        }
+
         private static CaptionResult Run(string tools, string videoUrl, string videoFile, CaptionMode mode,
             Action<DownloadProgress> progress, CancellationToken token)
         {
@@ -63,6 +111,9 @@ namespace CustomYouTubeDownloader
             bool englishReady = wantEnglish && HasCues(englishPath);
             bool originalReady = false;
             bool generated = false;
+            string sourceLanguage = null;
+            string translatedYouTubeTrack = null;
+            MediaTrack[] streams = null;
             var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var issues = new List<string>();
             if (englishReady)
@@ -87,6 +138,7 @@ namespace CustomYouTubeDownloader
 
                         Report(progress, "Looking for YouTube subtitles…", null);
                         var tracks = ReadTracks(tools, node, source, stage, token);
+                        sourceLanguage = tracks.Language;
                         string originalTag = wantOriginal ? ChooseOriginal(tracks) : null;
                         if (originalTag != null)
                         {
@@ -101,6 +153,16 @@ namespace CustomYouTubeDownloader
                             }
                         }
                         string englishTag = wantEnglish && !englishReady ? ChooseEnglish(tracks) : null;
+                        if (englishTag != null && !tracks.Manual.Contains(englishTag))
+                        {
+                            streams = ReadMediaTracks(tools, video.FullName, token);
+                            if (SaveEmbeddedEnglish(tools, streams, video.FullName, stage, englishPath, token))
+                            {
+                                englishReady = true;
+                                files.Add(englishPath);
+                                englishTag = null;
+                            }
+                        }
                         if (originalTag != null && IsEnglish(originalTag) && englishTag != null)
                             originalTag = englishTag;
 
@@ -112,6 +174,14 @@ namespace CustomYouTubeDownloader
                             string staged;
                             if (!sourceFiles.TryGetValue(tag, out staged))
                                 continue;
+                            if (tag == englishTag && tag != originalTag && !tracks.Manual.Contains(tag) &&
+                                !tag.EndsWith("-orig", StringComparison.OrdinalIgnoreCase) && !IsEnglish(tracks.Language) &&
+                                File.Exists(Path.Combine(tools, "whisper", "ggml-medium-q5_0.bin")))
+                            {
+                                // Keep YouTube's machine translation as a fallback while translating the original dialogue.
+                                translatedYouTubeTrack = staged;
+                                continue;
+                            }
                             string destination = stem + "." + LanguageFileTag(tag) + ".srt";
                             try
                             {
@@ -142,16 +212,38 @@ namespace CustomYouTubeDownloader
                 {
                     try
                     {
-                        string translated = MakeEnglish(tools, video.FullName, stage, progress, token);
-                        Publish(translated, englishPath, token);
+                        if (streams == null)
+                        {
+                            streams = ReadMediaTracks(tools, video.FullName, token);
+                            englishReady = SaveEmbeddedEnglish(tools, streams, video.FullName, stage, englishPath, token);
+                        }
+                        if (!englishReady)
+                        {
+                            string translated = MakeEnglish(tools, video.FullName, stage, SelectAudio(streams, sourceLanguage), sourceLanguage, progress, token);
+                            Publish(translated, englishPath, token);
+                            generated = true;
+                        }
                         files.Add(englishPath);
-                        generated = true;
                         englishReady = true;
                     }
                     catch (Exception ex)
                     {
                         if (!IsExpectedFailure(ex))
                             throw;
+                        issues.Add(ex.Message);
+                    }
+                }
+                if (!englishReady && translatedYouTubeTrack != null)
+                {
+                    try
+                    {
+                        Publish(translatedYouTubeTrack, englishPath, token);
+                        files.Add(englishPath);
+                        englishReady = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        if (!IsExpectedFailure(ex)) throw;
                         issues.Add(ex.Message);
                     }
                 }
@@ -324,15 +416,150 @@ namespace CustomYouTubeDownloader
             };
         }
 
-        private static string MakeEnglish(string tools, string videoFile, string stage,
-            Action<DownloadProgress> progress, CancellationToken token)
+        private sealed class MediaTracks { public MediaTrack[] streams { get; set; } }
+
+        private sealed class MediaTrack
         {
+            public int index { get; set; }
+            public string codec_type { get; set; }
+            public string codec_name { get; set; }
+            public Dictionary<string, int> disposition { get; set; }
+            public Dictionary<string, string> tags { get; set; }
+
+            internal bool Has(string flag)
+            {
+                int value;
+                return disposition != null && disposition.TryGetValue(flag, out value) && value != 0;
+            }
+
+            internal string Tag(string name)
+            {
+                return tags == null ? null : tags.FirstOrDefault(t => t.Key.Equals(name, StringComparison.OrdinalIgnoreCase)).Value;
+            }
+
+            internal bool Commentary
+            {
+                get { return Has("comment") || Labeled(@"\b(commentary|audio description|descriptive audio)\b"); }
+            }
+
+            internal bool Labeled(string pattern)
+            {
+                return Regex.IsMatch(Tag("title") + " " + Tag("handler_name"), pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            }
+
+            internal string Map { get { return "0:" + index.ToString(CultureInfo.InvariantCulture); } }
+        }
+
+        private static MediaTrack[] ReadMediaTracks(string tools, string file, CancellationToken token)
+        {
+            string probe = Path.Combine(tools, "ffprobe.exe");
+            if (File.Exists(probe))
+            {
+                try
+                {
+                    var result = RunProcess(probe, new[] { "-v", "error", "-show_entries",
+                        "stream=index,codec_type,codec_name:stream_disposition:stream_tags=language,title,handler_name", "-of", "json", file
+                    }, tools, token, null);
+                    if (result.ExitCode == 0)
+                    {
+                        var media = new JavaScriptSerializer().Deserialize<MediaTracks>(result.Readout);
+                        if (media != null && media.streams != null) return media.streams;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (!IsExpectedFailure(ex) && !(ex is ArgumentException)) throw;
+                }
+            }
+            return new MediaTrack[0];
+        }
+
+        private static MediaTrack SelectAudio(IEnumerable<MediaTrack> streams, string sourceLanguage = null)
+        {
+            string native = WhisperLanguage(sourceLanguage);
+            return streams.Where(s => s.codec_type == "audio")
+                .OrderBy(s => s.Commentary || s.Has("visual_impaired") || s.Has("hearing_impaired") || s.Has("karaoke"))
+                .ThenByDescending(s => s.Has("original") || s.Labeled(@"\boriginal\b"))
+                .ThenBy(s => s.Has("dub") || s.Labeled(@"\b(dub|dubbed)\b"))
+                .ThenByDescending(s => native != null && WhisperLanguage(s.Tag("language")) == native)
+                .ThenByDescending(s => s.Has("default")).ThenBy(s => s.index).FirstOrDefault();
+        }
+
+        internal static string OriginalAudioMap(string toolsDirectory, string videoFile, CancellationToken token)
+        {
+            var track = SelectAudio(ReadMediaTracks(toolsDirectory, videoFile, token));
+            return track == null ? "0:a:0" : track.Map;
+        }
+
+        private static bool SaveEmbeddedEnglish(string tools, IEnumerable<MediaTrack> streams, string video,
+            string stage, string destination, CancellationToken token)
+        {
+            // Forced captions frequently contain signs and foreign phrases only. They are incomplete as a dub script.
+            var codecs = new[] { "subrip", "ass", "ssa", "webvtt", "mov_text", "text" };
+            var tracks = streams.Where(s => s.codec_type == "subtitle" && codecs.Contains(s.codec_name) &&
+                WhisperLanguage(s.Tag("language")) == "en" && !s.Has("forced") && !s.Commentary &&
+                !s.Labeled(@"\b(forced|signs only|signs (and|&) songs)\b")).OrderByDescending(s => s.Has("default"));
+            foreach (var track in tracks)
+            {
+                string srt = Path.Combine(stage, "embedded-" + track.index.ToString(CultureInfo.InvariantCulture) + ".srt");
+                var read = RunProcess(Path.Combine(tools, "ffmpeg.exe"), new[] {
+                    "-nostdin", "-loglevel", "error", "-y", "-i", video, "-map", track.Map, "-c:s", "srt", srt
+                }, stage, token, null);
+                if (read.ExitCode != 0 || !HasCues(srt)) continue;
+                Publish(srt, destination, token);
+                return true;
+            }
+            return false;
+        }
+
+        // Language tokens in the multilingual medium and base checkpoints shipped by the installer.
+        private static readonly HashSet<string> WhisperLanguages = new HashSet<string>(
+            ("en zh de es ru ko fr ja pt tr pl ca nl ar sv it id hi fi vi he uk el ms cs ro da hu ta no th ur hr " +
+             "bg lt la mi ml cy sk te fa lv bn sr az sl kn et mk br eu is hy ne mn bs kk sq sw gl mr pa si km sn " +
+             "yo so af oc ka be tg sd gu am yi lo uz fo ht ps tk nn mt sa lb my bo tl mg as tt haw ln ha ba jw su").Split(' '));
+
+        internal static string[] SourceLanguageCodes
+        {
+            get { return WhisperLanguages.OrderBy(code => code, StringComparer.Ordinal).ToArray(); }
+        }
+
+        private static string WhisperLanguage(string tag)
+        {
+            if (String.IsNullOrWhiteSpace(tag)) return null;
+            string code = tag.Split('-', '_')[0].ToLowerInvariant();
+            switch (code)
+            {
+                case "fre": return "fr"; case "ger": return "de"; case "dut": return "nl"; case "cze": return "cs";
+                case "chi": return "zh"; case "gre": return "el"; case "per": return "fa"; case "rum": return "ro";
+                case "wel": return "cy"; case "slo": return "sk"; case "alb": return "sq"; case "arm": return "hy";
+                case "baq": return "eu"; case "bur": return "my"; case "geo": return "ka"; case "ice": return "is";
+                case "mac": return "mk"; case "mao": return "mi"; case "may": return "ms"; case "tib": return "bo";
+                case "fil": return "tl"; case "jv": case "jav": return "jw"; case "nb": case "nob": return "no";
+            }
+            if (WhisperLanguages.Contains(code)) return code;
+            if (code.Length == 3)
+            {
+                var language = CultureInfo.GetCultures(CultureTypes.NeutralCultures)
+                    .FirstOrDefault(c => c.ThreeLetterISOLanguageName.Equals(code, StringComparison.OrdinalIgnoreCase));
+                if (language != null && WhisperLanguages.Contains(language.TwoLetterISOLanguageName)) return language.TwoLetterISOLanguageName;
+            }
+            return null;
+        }
+
+        private static string MakeEnglish(string tools, string videoFile, string stage, MediaTrack track, string sourceLanguage,
+            Action<DownloadProgress> progress, CancellationToken token, string languageOverride = null)
+        {
+            string explicitLanguage = WhisperLanguage(languageOverride);
+            if (!String.IsNullOrWhiteSpace(languageOverride) && explicitLanguage == null)
+                throw new ArgumentException("Choose a supported spoken language for translation.");
             string whisperHome = Path.Combine(tools, "whisper");
             string whisper = Path.Combine(whisperHome, "whisper-cli.exe");
-            string model = Path.Combine(whisperHome, "ggml-base.bin");
+            string model = Path.Combine(whisperHome, "ggml-medium-q5_0.bin");
+            bool enhanced = File.Exists(model);
+            if (!enhanced) model = Path.Combine(whisperHome, "ggml-base.bin");
             string ffmpeg = Path.Combine(tools, "ffmpeg.exe");
             if (!File.Exists(whisper) || !File.Exists(model))
-                throw new InvalidOperationException("The local English translation tools are missing.");
+                throw new InvalidOperationException("Run setup-translation.ps1 in the app folder to install the offline translator.");
             if (!File.Exists(ffmpeg))
                 throw new InvalidOperationException("FFmpeg is required to read this video’s audio.");
 
@@ -340,15 +567,18 @@ namespace CustomYouTubeDownloader
             string captions = Path.Combine(stage, "english");
             Report(progress, "Preparing the video’s audio…", null);
             var extracted = RunProcess(ffmpeg, new[] {
-                "-nostdin", "-hide_banner", "-loglevel", "error", "-n", "-i", videoFile, "-map", "0:a:0",
+                "-nostdin", "-hide_banner", "-loglevel", "error", "-n", "-i", videoFile, "-map", track == null ? "0:a:0" : track.Map,
                 "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-rf64", "auto", audio
             }, stage, token, null);
             if (extracted.ExitCode != 0 || !File.Exists(audio) || new FileInfo(audio).Length <= 80)
                 throw new InvalidOperationException("The video’s audio could not be read for translation.");
 
-            Report(progress, "Generating English subtitles on this laptop…", null);
+            string language = explicitLanguage ?? WhisperLanguage(track == null ? null : track.Tag("language")) ??
+                WhisperLanguage(sourceLanguage) ?? "auto";
+            string status = enhanced ? "Translating dialogue with Whisper medium…" : "Translating dialogue with Whisper base…";
+            Report(progress, status, null);
             var translated = RunProcess(whisper, new[] {
-                "--model", model, "--file", audio, "--language", "auto", "--translate", "--output-srt",
+                "--model", model, "--file", audio, "--language", language, "--translate", "--beam-size", "8", "--best-of", "8", "--output-srt",
                 "--output-file", captions, "--no-gpu", "--print-progress"
             }, whisperHome, token, line =>
             {
@@ -356,7 +586,7 @@ namespace CustomYouTubeDownloader
                 if (match.Success)
                 {
                     int percent = Int32.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
-                    Report(progress, "Generating English subtitles on this laptop…", Math.Min(percent, 100));
+                    Report(progress, status, Math.Min(percent, 100));
                 }
             });
             string staged = captions + ".srt";

@@ -51,7 +51,9 @@ namespace CustomYouTubeDownloader
             AddDownloadField(video, "Subtitles", captions, 5);
             video.RowStyles.Insert(7, new RowStyle(SizeType.Absolute, 28));
             video.Controls.Add(englishAudio, 0, 7);
-            video.Controls.Add(hint, 0, 8);
+            video.RowStyles.Insert(8, new RowStyle(SizeType.Absolute, 33));
+            video.Controls.Add(CreateStyleRow(audioStyle), 0, 8);
+            video.Controls.Add(hint, 0, 9);
 
             var storage = DownloadSettingsCard("Folders");
             var destination = Grid(2, Padding.Empty);
@@ -125,6 +127,24 @@ namespace CustomYouTubeDownloader
         {
             card.Controls.Add(CreateLabel(caption, StudioTheme.Ink), 0, row);
             card.Controls.Add(input, 0, row + 1);
+        }
+
+        private static TableLayoutPanel CreateStyleRow(ComboBox selector)
+        {
+            var row = Grid(2, Padding.Empty);
+            row.AutoSize = true;
+            row.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            row.Padding = new Padding(0, 1, 0, 4);
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            var label = CreateLabel("Audio style", StudioTheme.Ink);
+            label.AutoSize = true;
+            label.Anchor = AnchorStyles.Left;
+            label.Dock = DockStyle.None;
+            label.Margin = new Padding(0, 0, 8, 0);
+            row.Controls.Add(label, 0, 0);
+            row.Controls.Add(selector, 1, 0);
+            return row;
         }
 
         private static Control DownloadInput(TextBox editor)
@@ -209,7 +229,7 @@ namespace CustomYouTubeDownloader
                 int width = ClientSize.Width;
                 bool stacked = width < Pixels(566);
                 int gap = Pixels(10);
-                int videoHeight = Pixels(275);
+                int videoHeight = Pixels(308);
                 int storageHeight = stacked ? Pixels(247) : videoHeight;
                 int actionHeight = Math.Max(Pixels(38), actions.Controls[0].GetPreferredSize(Size.Empty).Height);
                 int fixedHeight = videoHeight + (stacked ? storageHeight + gap : 0) + gap * 2 + actionHeight;

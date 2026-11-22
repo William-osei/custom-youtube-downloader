@@ -79,10 +79,16 @@ internal static partial class WindowLayoutTests
             "The initial Download workspace is missing its selection indicator.");
         var linkBox = Descendants(tabs.SelectedTab).OfType<TextBox>().Single(control => control.Multiline);
         var audio = Descendants(tabs.SelectedTab).OfType<CheckBox>().Single(c => c.AccessibleName == "Add English audio");
+        var style = Descendants(tabs.SelectedTab).OfType<ComboBox>().Single(c => c.AccessibleName == "English narration style");
         var concurrency = Descendants(tabs.SelectedTab).OfType<NumericUpDown>()
             .Single(c => c.AccessibleName == "Simultaneous downloads");
         Require(!audio.Checked && concurrency.Minimum == 1 && concurrency.Maximum == 4 && concurrency.Value == 3,
             "A fresh profile should use original audio and three parallel downloads.");
+        Require(!style.Enabled && style.SelectedIndex == 0 && style.Items.Cast<string>().SequenceEqual(
+            new[] { "Faithful translation", "Serious storyteller", "Sarcastic storyteller" }), "Unexpected narration choices.");
+        audio.Checked = true;
+        Require(style.Enabled && style.TabStop, "Enabling English audio did not enable keyboard style selection.");
+        audio.Checked = false;
 
         form.Size = form.MinimumSize;
         await Task.Yield();
@@ -102,19 +108,8 @@ internal static partial class WindowLayoutTests
                 (control is Button || control is LinkLabel || control is ComboBox || control is CheckBox ||
                  control is NumericUpDown)))
             {
-                workspace.ScrollControlIntoView(control);
-                await Task.Yield();
-                var bounds = control.Parent.RectangleToScreen(control.Bounds);
-                for (Control parent = control.Parent; parent != workspace.Parent; parent = parent.Parent)
-                {
-                    var viewport = parent.RectangleToScreen(parent.ClientRectangle);
-                    if (!viewport.Contains(bounds))
-                    {
-                        clipped.Add(workspace.Text + " clipped " + (control.AccessibleName ?? control.Text) + " at " + bounds + " inside " +
-                            parent.GetType().Name + " " + viewport + ".");
-                        break;
-                    }
-                }
+                string issue = await ClippedControl(workspace, control);
+                if (issue != null) clipped.Add(issue);
             }
         }
         tabs.SelectedTab = page;
@@ -165,6 +160,30 @@ internal static partial class WindowLayoutTests
         Require(guidance.Visible && form.RectangleToScreen(form.ClientRectangle)
             .Contains(guidance.RectangleToScreen(guidance.ClientRectangle)),
             "The compact workspace hides validation feedback for an empty queue.");
+    }
+
+    private static async Task<string> ClippedControl(TabPage workspace, Control control)
+    {
+        // A fullscreen application on the desktop can minimize the background test form.
+        var window = workspace.FindForm();
+        var pendingLayout = System.Diagnostics.Stopwatch.StartNew();
+        while (workspace.ClientSize.Height < control.Height && pendingLayout.ElapsedMilliseconds < 2000)
+        {
+            if (window.WindowState == FormWindowState.Minimized) window.WindowState = FormWindowState.Normal;
+            await Task.Delay(20);
+        }
+        workspace.ScrollControlIntoView(control);
+        await Task.Yield();
+        var bounds = control.Parent.RectangleToScreen(control.Bounds);
+        for (Control parent = control.Parent; parent != workspace.Parent; parent = parent.Parent)
+        {
+            var viewport = parent.RectangleToScreen(parent.ClientRectangle);
+            if (!viewport.Contains(bounds))
+                return workspace.Text + " clipped " + (control.AccessibleName ?? control.Text) +
+                    " at " + bounds + " inside " + parent.GetType().Name + " " + viewport +
+                    " (window " + window.WindowState + " " + window.Bounds + ").";
+        }
+        return null;
     }
 
     private static Button NavigationButton(Form form, int index)

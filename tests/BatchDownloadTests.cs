@@ -87,6 +87,7 @@ internal static partial class WindowLayoutTests
         var input = FormField<TextBox>(form, "url");
         var limit = FormField<NumericUpDown>(form, "parallelDownloads");
         var english = FormField<CheckBox>(form, "englishAudio");
+        var style = FormField<ComboBox>(form, "audioStyle");
         var tabs = Descendants(form).OfType<TabControl>().Single();
         Func<string, string> marker = id => Path.Combine(tools, id);
         Action<string> release = id => File.WriteAllText(marker(id) + ".release", "");
@@ -130,13 +131,23 @@ internal static partial class WindowLayoutTests
             rows.All(row => State(form, row) != "Running"), "Cancelled work continued or stayed in progress.");
 
         english.Checked = true;
+        style.SelectedIndex = 1;
         release("batchtest09");
         input.Text = watch + "batchtest09";
         start.PerformClick();
         await WaitFor(() => start.Enabled, "Failed audio conversion did not finish.");
         var pending = QueueHistory(profile).Single(row => ((string)row["Url"]).EndsWith("batchtest09"));
         string original = (string)pending["FilePath"];
-        Require(State(form, pending) == "AudioPending" && File.Exists(original), "Audio failure lost the original video.");
+        Require(State(form, pending) == "AudioPending" && File.Exists(original) &&
+            Convert.ToInt32(pending["AudioStyle"]) == 1, "Audio failure lost the original video or its narration style.");
+        CheckSavedStyles(form, profile, pending);
+        string sample = Path.Combine(tools, "sample.mkv");
+        if (File.Exists(sample))
+        {
+            File.Copy(sample, original, true);
+            File.SetLastWriteTimeUtc(Path.ChangeExtension(original, ".en.srt"), DateTime.UtcNow);
+        }
+        style.SelectedIndex = 2;
         tabs.SelectedIndex = 4;
         var list = Descendants(tabs.SelectedTab).OfType<ListView>().Single();
         var pendingRow = list.Items.Cast<ListViewItem>().Single(item =>
@@ -147,10 +158,13 @@ internal static partial class WindowLayoutTests
         retry.PerformClick();
         await WaitFor(() => start.Enabled, "Audio retry did not finish.");
         Require(File.ReadAllLines(marker("batchtest09") + ".starts").Length == 1 &&
-            File.ReadAllText(original) == "batchtest09", "Audio retry downloaded again or damaged the original.");
+            (File.Exists(sample) || File.ReadAllText(original) == "batchtest09"), "Audio retry downloaded again or damaged the original.");
 
-        if (File.Exists(Path.Combine(tools, "sample.mkv")))
+        if (File.Exists(sample))
         {
+            var recovered = QueueHistory(profile).Single(row => ((string)row["Url"]).EndsWith("batchtest09"));
+            Require(State(form, recovered) == "Completed" && ((string)recovered["FilePath"]).EndsWith(" [Serious English dub].mkv"),
+                "Retry must use the serious style saved in History. " + recovered["Note"]);
             tabs.SelectedIndex = 0;
             input.Text = watch + "batchtest10";
             release("batchtest10");
@@ -158,8 +172,65 @@ internal static partial class WindowLayoutTests
             await WaitFor(() => start.Enabled, "The real English audio job did not finish.");
             var result = QueueHistory(profile).Single(row => ((string)row["Url"]).EndsWith("batchtest10"));
             string dubbed = (string)result["FilePath"];
-            Require(State(form, result) == "Completed" && dubbed.EndsWith(" [English dub].mkv") &&
+            Require(State(form, result) == "Completed" && dubbed.EndsWith(" [Sarcastic English dub].mkv") &&
                 File.Exists(dubbed), "History did not point to the playable English copy. " + result["Note"]);
+
+            tabs.SelectedIndex = 1;
+            var library = FormField<ListView>(form, "library");
+            await WaitFor(() => library.Items.Cast<ListViewItem>().Any(item => item.Text == "batchtest10"),
+                "The library did not index the original video.");
+            var libraryStyle = FormField<ComboBox>(form, "libraryStyle");
+            var createDub = FormField<Button>(form, "libraryDub");
+            var editEnglish = FormField<Button>(form, "libraryEditEnglish");
+            library.Items.Cast<ListViewItem>().Single(item => item.Text == "batchtest10").Selected = true;
+            Require(libraryStyle.Enabled && libraryStyle.SelectedIndex == 2 && createDub.Enabled && editEnglish.Enabled,
+                "The selected original should offer its English text and narration styles.");
+            foreach (Control control in new Control[] { libraryStyle, createDub, editEnglish })
+            {
+                string issue = await ClippedControl(tabs.SelectedTab, control);
+                Require(issue == null, issue);
+            }
+            libraryStyle.SelectedIndex = 0;
+            Require(style.SelectedIndex == 0, "The Library style is out of sync with the Download tab.");
+            createDub.PerformClick();
+            await WaitFor(() => start.Enabled, "Rendering a new style from Library did not finish.");
+            await WaitFor(() => library.Items.Cast<ListViewItem>().Any(item => item.Text == "batchtest10 [English dub]"),
+                "The second narration style did not appear beside the original.");
+            foreach (ListViewItem item in library.SelectedItems.Cast<ListViewItem>().ToArray()) item.Selected = false;
+            library.Items.Cast<ListViewItem>().Single(item => item.Text == "batchtest10 [English dub]").Selected = true;
+            Require(!createDub.Enabled && !editEnglish.Enabled && !libraryStyle.Enabled,
+                "A generated dub was incorrectly offered as a source for edits or further dubbing.");
+        }
+    }
+
+    private static void CheckSavedStyles(Form form, string profile, Dictionary<string, object> sample)
+    {
+        var app = form.GetType().Assembly;
+        Type preferences = app.GetType("CustomYouTubeDownloader.AppPreferences");
+        var load = preferences.GetMethod("Load", BindingFlags.Static | BindingFlags.NonPublic, null,
+            new[] { typeof(string) }, null);
+        Func<string, int> savedStyle = directory => Convert.ToInt32(preferences.GetField("AudioStyle")
+            .GetValue(load.Invoke(null, new object[] { directory })));
+        Require(savedStyle(profile) == 1, "Saved preferences lost the selected narration style.");
+        string legacy = Directory.CreateDirectory(Path.Combine(profile, "older-settings")).FullName;
+        string settings = Path.Combine(legacy, "settings.json");
+        File.WriteAllText(settings, "{\"englishAudio\":true}");
+        Require(savedStyle(legacy) == 0, "Older settings should use faithful translation.");
+        File.WriteAllText(settings, "{\"englishAudio\":true,\"audioStyle\":99}");
+        Require(savedStyle(legacy) == 0, "Unknown styles should use faithful translation.");
+
+        Type store = app.GetType("CustomYouTubeDownloader.DownloadHistoryStore");
+        object history = Activator.CreateInstance(store, legacy);
+        var entry = new Dictionary<string, object>(sample);
+        entry.Remove("AudioStyle");
+        foreach (bool futureVersion in new[] { false, true })
+        {
+            if (futureVersion) entry["AudioStyle"] = 99;
+            File.WriteAllText(Path.Combine(legacy, "history.json"), new JavaScriptSerializer().Serialize(new[] { entry }));
+            var entries = (System.Collections.IEnumerable)store.GetMethod("Load").Invoke(history, null);
+            object record = entries.Cast<object>().Single();
+            Require(Convert.ToInt32(record.GetType().GetProperty("AudioStyle").GetValue(record, null)) == 0,
+                "An older or unknown history style should retry using faithful translation.");
         }
     }
 }

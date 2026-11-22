@@ -35,9 +35,21 @@ If English audio is interrupted, open **History → Needs retry**. Choose **Play
 
 ## English audio
 
-Enable **Add English audio (synthetic voice)** in Download, or select an existing MP4 or MKV in **Library** and choose **Create English audio**. The app saves a second video with `[English dub]` in its filename. Its default track speaks the dialogue in a Windows English voice. Your player’s audio menu lets you switch to the original soundtrack, including its voices, music and effects. The copy also includes an English subtitle track.
+Enable **Add English audio (synthetic voice)** in Download, or select an original MP4 or MKV in **Library**. Choose an **Audio style** before starting the download or selecting **Create English audio**.
 
-The narration follows the timestamps in the English subtitles. The app can reuse a local `.en.srt`, fetch available English captions for a download, or translate the speech locally using the multilingual model installed by `.\setup-translation.ps1`. An installed English Windows desktop speech voice is required. For a correction, edit the English SRT before creating the dub. Translation quality depends on the language, audio clarity and captions.
+| Audio style | What you hear |
+| --- | --- |
+| Faithful translation | A Windows English voice reads the timed translation, including names and numbers as written. This is the default. |
+| Serious storyteller | The same translated dialogue in a lower, more measured voice. |
+| Sarcastic storyteller | The dialogue plus an occasional spoken “Narrator’s aside.” The app recognizes particular story situations and adds a remark only when there is room before the next line. |
+
+Each style creates a separate video. The original soundtrack remains selectable in the player, and the English subtitles contain the translated dialogue. An installed English Windows desktop speech voice is required. Changing a transcript and creating the same style again produces a numbered copy so you can compare versions.
+
+### Review a translation
+
+In **Library**, select the original video and choose **Edit English text**. If it has no English transcript yet, choose **Generate English subtitles** first. Select a line, click **Listen to original** to hear that part of the source, and correct the wording. **Save corrections** (Ctrl+S) preserves the cue times and backs up the previous SRT. Choose **Create English audio** to hear the revised words.
+
+To revisit an older automatic translation, use **Retranslate from audio** in the editor. Leave the source language on **Automatic**, or choose the language being spoken if detection got it wrong. The app runs the installed model on the original dialogue and keeps the previous SRT beside the video. A normal download reuses an existing English SRT, including your edits.
 
 ## Find movies and series
 
@@ -53,7 +65,7 @@ Select a finder result and click **Save to watchlist**. In **Watchlist**, use **
 
 ## Subtitles
 
-Choose **Original YouTube captions**, **English subtitles**, or **Original + English**. When YouTube has English captions, the app can use those, including automatic translations YouTube offers. If it can't fetch English captions, the app generates timed English subtitles from the audio on this laptop. In **Library**, select an existing video and click **Generate English subtitles** to do this without downloading it again.
+Choose **Original YouTube captions**, **English subtitles**, or **Original + English**. The app can use creator-provided English captions or extract a full English text subtitle track embedded in the video. When translation is needed, it uses local Whisper and looks for the original dialogue track and its language. With the upgraded model installed, a YouTube machine translation can serve as a fallback. In **Library**, select a saved video and click **Generate English subtitles** to work offline.
 
 Subtitles are saved as `.srt` files alongside the video. When VLC is installed, **Play video** loads the English subtitle file if one is present. You can also open the video in your preferred player and load the SRT manually. Local speech translation supports many languages and can take time on long videos.
 
@@ -73,9 +85,11 @@ Use 64-bit Windows with .NET Framework 4.8 and Node.js 22 or later. From PowerSh
 .\build.ps1
 ```
 
-The first script installs the local yt-dlp, FFmpeg, and FFprobe tools. The second adds the optional offline speech model (about 148 MB). It is needed for generating English subtitles from audio. Run **Custom YouTube Downloader.exe** after building and keep `tools` beside it. The repository excludes binaries, downloaded media, and local app settings, including history and watchlist files.
+The first script installs the local yt-dlp, FFmpeg, and FFprobe tools. The second downloads the multilingual Whisper medium Q5 model (539 MB) for local speech translation. Run the translation setup again when upgrading from a base-model installation to enable medium. Older installs with only the base model still work. Medium uses more CPU time and can run considerably slower than playback on a laptop. Check uncertain words, especially proper names, against the original audio.
 
-Run `.\test.ps1` to check caption selection, keyboard navigation, layouts, overlapping downloads, cancellation and retries. With the media engines and an English voice installed, `.\test.ps1 -Media` also checks real MP4 and MKV narration, timing and preservation of the original streams. Commit and push each tested update to GitHub. For a new version, set `AppIdentity.Version`, tag the release commit, and publish the Windows ZIP built from that tag with `.\package.ps1`.
+Run **Custom YouTube Downloader.exe** after building and keep `tools` beside it. The repository excludes binaries, downloaded media, and local app settings, including history and watchlist files.
+
+Run `.\test.ps1` to check caption selection, transcript editing, keyboard navigation, layouts, overlapping downloads, cancellation and retries. With the media engines and an English voice installed, `.\test.ps1 -Media` also checks real narration, subtitle timing, audio previews and preservation of the original streams. Commit and push each tested update to GitHub. For a new version, set `AppIdentity.Version`, tag the release commit, and publish the Windows ZIP built from that tag with `.\package.ps1`.
 
 Private playlists, rentals, and other restricted or unavailable videos may not download. [YouTube terms](https://www.youtube.com/t/terms)
 

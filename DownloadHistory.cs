@@ -36,6 +36,7 @@ namespace CustomYouTubeDownloader
         public bool CompatibleMp4 { get; set; }
         public CaptionMode Captions { get; set; }
         public bool EnglishAudio { get; set; }
+        public NarrationStyle AudioStyle { get; set; }
         public int PlaylistPosition { get; set; }
     }
 
@@ -209,7 +210,9 @@ namespace CustomYouTubeDownloader
                 StartedUtc = entry.StartedUtc.Kind == DateTimeKind.Unspecified ?
                     DateTime.SpecifyKind(entry.StartedUtc, DateTimeKind.Utc) : entry.StartedUtc.ToUniversalTime(),
                 State = entry.State, MaxHeight = entry.MaxHeight, CompatibleMp4 = entry.CompatibleMp4,
-                Captions = entry.Captions, EnglishAudio = entry.EnglishAudio, PlaylistPosition = entry.PlaylistPosition
+                Captions = entry.Captions, EnglishAudio = entry.EnglishAudio,
+                AudioStyle = Enum.IsDefined(typeof(NarrationStyle), entry.AudioStyle) ? entry.AudioStyle : NarrationStyle.Faithful,
+                PlaylistPosition = entry.PlaylistPosition
             };
         }
 

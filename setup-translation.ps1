@@ -8,9 +8,10 @@ $engineFolder = Join-Path $PSScriptRoot 'tools\whisper'
 New-Item -ItemType Directory -Path $engineFolder -Force | Out-Null
 $archiveUri = 'https://github.com/ggml-org/whisper.cpp/releases/download/b5454/whisper-bin-x64.zip'
 $archiveHash = '6ba69e3482d7826214f90a6a9c84ca07782aec1e1d0c6a7c30c994fd5d816ccb'
-$modelUri = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.bin?download=true'
-$modelHash = '60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe'
-$modelPath = Join-Path $engineFolder 'ggml-base.bin'
+$modelName = 'ggml-medium-q5_0.bin'
+$modelUri = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/${modelName}?download=true"
+$modelHash = '19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f'
+$modelPath = Join-Path $engineFolder $modelName
 $cliPath = Join-Path $engineFolder 'whisper-cli.exe'
 $binaryNames = @(
     'whisper-cli.exe', 'whisper.dll', 'ggml.dll', 'ggml-base.dll',
@@ -28,7 +29,7 @@ function Get-VerifiedDownload([string]$Uri, [string]$Path, [string]$Hash) {
     if (Test-Checksum $Path $Hash) {
         return
     }
-    & curl.exe --fail --silent --show-error --location --proto '=https' --retry 2 --connect-timeout 15 --max-time 240 --output $Path $Uri
+    & curl.exe --fail --silent --show-error --location --proto '=https' --retry 2 --connect-timeout 15 --speed-time 120 --speed-limit 1024 --output $Path $Uri
     if ($LASTEXITCODE -ne 0 -or !(Test-Checksum $Path $Hash)) {
         throw "Could not download and verify $Uri."
     }
@@ -63,8 +64,8 @@ try {
     }
 
     if ($Refresh -or !(Test-Checksum $modelPath $modelHash)) {
-        $stagedModel = Join-Path $engineFolder 'ggml-base.bin.part'
-        Write-Host 'Installing the multilingual audio model (148 MB)...'
+        $stagedModel = "$modelPath.part"
+        Write-Host 'Installing the multilingual medium translation model (539 MB)...'
         Get-VerifiedDownload $modelUri $stagedModel $modelHash
         Move-Item -LiteralPath $stagedModel -Destination $modelPath -Force
     }
