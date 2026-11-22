@@ -37,15 +37,12 @@ namespace CustomYouTubeDownloader
         }
     }
 
-    internal sealed class DownloaderForm : Form
+    internal sealed partial class DownloaderForm : Form
     {
-        private static readonly Color Background = Color.FromArgb(15, 23, 39);
-        private static readonly Color PanelBackground = Color.FromArgb(25, 37, 57);
-        private static readonly Color InputBackground = Color.FromArgb(34, 49, 71);
-        private static readonly Color TextColor = Color.FromArgb(240, 246, 254);
-        private static readonly Color Secondary = Color.FromArgb(176, 191, 211);
-        private static readonly Color Accent = Color.FromArgb(108, 229, 190);
-        private static readonly Color Error = Color.FromArgb(255, 180, 177);
+        private static readonly Color Background = StudioTheme.Canvas;
+        private static readonly Color TextColor = StudioTheme.Ink;
+        private static readonly Color Secondary = StudioTheme.Muted;
+        private static readonly Color Error = Color.FromArgb(155, 49, 43);
         private static readonly int[] QualityLimits = { 0, 2160, 1440, 1080, 720 };
         private static readonly string SettingsDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Custom YouTube Downloader");
@@ -73,14 +70,13 @@ namespace CustomYouTubeDownloader
         private readonly Button openFolder = CreateButton("Open folder", false);
         private readonly Button play = CreateButton("Play video", false);
         private readonly Button showDetails = CreateButton("Details", false);
-        private readonly TabControl tabs = new TabControl();
+        private readonly TabControl tabs = new WorkspacePages();
         private readonly TableLayoutPanel mainLayout = Grid(1, Padding.Empty);
-        private readonly LinkLabel fullScreenLink = CreateHeaderLink("Full screen (F11)");
         private bool fullScreen;
         private Rectangle previousBounds;
         private FormWindowState previousWindowState;
         private Control statusPanel;
-        private Control footer;
+        private int statusPage = -1;
         private readonly TextBox search = CreateInput("Search saved videos");
         private readonly ListView library = new ListView();
         private readonly Label libraryInfo = CreateLabel("Open the library to see your videos.", Secondary);
@@ -116,7 +112,7 @@ namespace CustomYouTubeDownloader
             BackColor = Background;
             ForeColor = TextColor;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(896, 700);
+            ClientSize = new Size(1136, 730);
             MinimumSize = new Size(500, 390);
 
             quality.Items.AddRange(new object[] {
@@ -143,28 +139,25 @@ namespace CustomYouTubeDownloader
             showDetails.Enabled = false;
 
             var layout = mainLayout;
-            layout.Padding = new Padding(20, 12, 20, 10);
-            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.Padding = new Padding(22, 18, 22, 16);
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 120));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowCount = layout.RowStyles.Count;
-            Controls.Add(layout);
-            layout.Controls.Add(CreateHeader(), 0, 0);
             tabs.Dock = DockStyle.Fill;
             tabs.Margin = Padding.Empty;
-            var downloadTab = CreateWorkspaceTab("Download", CreateDownloadPanel(), new Size(440, 408));
-            var libraryTab = CreateWorkspaceTab("Library", CreateLibraryPanel(), new Size(590, 245));
+            var downloadTab = CreateWorkspaceTab("Download", CreateDownloadPanel(), new Size(342, 410));
+            var libraryTab = CreateWorkspaceTab("Library", CreateLibraryPanel(), new Size(350, 270));
             tabs.TabPages.Add(downloadTab);
             tabs.TabPages.Add(libraryTab);
-            watchlist = new WatchlistPanel(watchlistStore, FindWatchlistTitle);
+            watchlist = new WatchlistPanel(watchlistStore, FindWatchlistTitle, delegate { tabs.SelectedIndex = 2; });
             finder = new DiscoveryPanel(ToolsDirectory, AddDiscoveredVideo, watchlist.Add, preferences.CountryCode);
-            var discoveryTab = CreateWorkspaceTab("Find Movies & Series", finder, new Size(600, 435));
+            var discoveryTab = CreateWorkspaceTab("Discover", finder, new Size(350, 390));
             tabs.TabPages.Add(discoveryTab);
-            var watchlistTab = CreateWorkspaceTab("Watchlist", watchlist, new Size(470, 215));
+            var watchlistTab = CreateWorkspaceTab("Watchlist", watchlist, new Size(350, 205));
             tabs.TabPages.Add(watchlistTab);
-            history = new HistoryPanel(historyStore, RetryVideo, OpenPath);
-            var historyTab = CreateWorkspaceTab("History", history, new Size(570, 240));
+            history = new HistoryPanel(historyStore, RetryVideo, OpenPath, delegate { tabs.SelectedIndex = 0; });
+            var historyTab = CreateWorkspaceTab("History", history, new Size(350, 255));
             tabs.TabPages.Add(historyTab);
             try { historyStore.RecoverInterrupted(); }
             catch (Exception ex)
@@ -175,9 +168,9 @@ namespace CustomYouTubeDownloader
             }
             layout.Controls.Add(tabs, 0, 1);
             statusPanel = CreateStatusPanel();
-            footer = CreateFooter();
             layout.Controls.Add(statusPanel, 0, 2);
-            layout.Controls.Add(footer, 0, 3);
+            ConfigureStudioShell();
+            UpdateStatusVisibility();
 
             download.Click += DownloadClicked;
             cancel.Click += delegate {
@@ -194,6 +187,7 @@ namespace CustomYouTubeDownloader
             format.SelectedIndexChanged += delegate { UpdateFormatHint(); };
             captions.SelectedIndexChanged += delegate { UpdateFormatHint(); };
             tabs.SelectedIndexChanged += delegate {
+                ShowStudioPage();
                 AcceptButton = tabs.SelectedIndex == 0 ? download : null;
                 UpdateStatusVisibility();
                 ScheduleLibraryRefresh();
@@ -215,7 +209,7 @@ namespace CustomYouTubeDownloader
 
         private static TabPage CreateWorkspaceTab(string title, Control content, Size minimumSize)
         {
-            var page = new TabPage(title) { BackColor = PanelBackground, AutoScroll = true };
+            var page = new TabPage(title) { BackColor = Background, AutoScroll = true, Padding = Padding.Empty };
             content.MinimumSize = minimumSize;
             page.AutoScrollMinSize = content.MinimumSize;
             content.SizeChanged += delegate {
@@ -239,6 +233,18 @@ namespace CustomYouTubeDownloader
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
+            Keys key = keyData & Keys.KeyCode;
+            if ((keyData & Keys.Modifiers) == Keys.Control && key >= Keys.D1 && key <= Keys.D5)
+            {
+                tabs.SelectedIndex = (int)key - (int)Keys.D1;
+                return true;
+            }
+            if (keyData == (Keys.Control | Keys.Tab) || keyData == (Keys.Control | Keys.Shift | Keys.Tab))
+            {
+                int step = (keyData & Keys.Shift) == 0 ? 1 : -1;
+                tabs.SelectedIndex = (tabs.SelectedIndex + tabs.TabCount + step) % tabs.TabCount;
+                return true;
+            }
             if (keyData == Keys.F11 || (keyData == Keys.Escape && fullScreen))
             {
                 ToggleFullScreen();
@@ -269,164 +275,80 @@ namespace CustomYouTubeDownloader
                     WindowState = previousWindowState;
                 }
                 fullScreen = !fullScreen;
-                fullScreenLink.Text = fullScreen ? "Exit full screen (F11)" : "Full screen (F11)";
+                sidebar.SetFullScreen(fullScreen);
             }
             finally { ResumeLayout(true); }
         }
 
-        private Control CreateHeader()
-        {
-            var heading = Grid(4, new Padding(0, 0, 0, 5));
-            heading.AutoSize = true;
-            heading.AutoSizeMode = AutoSizeMode.GrowAndShrink;
-            heading.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 59));
-            heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            heading.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            heading.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            heading.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
-            heading.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
-            heading.RowCount = 2;
-            var brand = new PictureBox {
-                Dock = DockStyle.Fill, Margin = new Padding(0, 3, 8, 3),
-                SizeMode = PictureBoxSizeMode.Zoom, TabStop = false
-            };
-            Bitmap brandImage;
-            using (var headerIcon = new Icon(Icon, 128, 128))
-                brandImage = headerIcon.ToBitmap();
-            brand.Image = brandImage;
-            brand.Disposed += delegate { brandImage.Dispose(); };
-            heading.Controls.Add(brand, 0, 0);
-            heading.SetRowSpan(brand, 2);
-            var title = CreateLabel("Custom YouTube Downloader", TextColor);
-            title.Font = new Font("Segoe UI Semibold", 24);
-            heading.Controls.Add(title, 1, 0);
-            heading.SetColumnSpan(title, 3);
-            heading.Controls.Add(CreateLabel("Find movies and series and manage your offline library.", Secondary), 1, 1);
-            fullScreenLink.LinkClicked += delegate { ToggleFullScreen(); };
-            heading.Controls.Add(fullScreenLink, 2, 1);
-            var releases = CreateHeaderLink("Releases");
-            releases.LinkClicked += delegate { AppIdentity.OpenReleases(this); };
-            heading.Controls.Add(releases, 3, 1);
-            return heading;
-        }
 
-        private static LinkLabel CreateHeaderLink(string text)
-        {
-            return new LinkLabel {
-                Text = text, AutoSize = true, Anchor = AnchorStyles.Right,
-                LinkColor = Accent, ActiveLinkColor = TextColor, VisitedLinkColor = Accent,
-                Margin = new Padding(12, 0, 0, 0)
-            };
-        }
-
-        private Control CreateDownloadPanel()
-        {
-            var card = Grid(2, new Padding(19, 14, 19, 11));
-            card.BackColor = PanelBackground;
-            card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 23));
-            card.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            foreach (int height in new[] { 23, 32, 25, 31, 24, 24, 32, 24, 31, 24, 44 })
-                card.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
-            card.RowCount = card.RowStyles.Count;
-
-            AddWide(card, CreateLabel("YouTube video or playlist links · one per line", TextColor), 0);
-            AddWide(card, url, 1);
-            AddWide(card, CreateLabel("Save to", TextColor), 2);
-            var folderRow = Grid(2, Padding.Empty);
-            folderRow.RowCount = 1;
-            folderRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            folderRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            folderRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 104));
-            browse.AutoSize = false;
-            browse.Dock = DockStyle.Fill;
-            browse.Margin = new Padding(8, 0, 0, 3);
-            folderRow.Controls.Add(folder, 0, 0);
-            folderRow.Controls.Add(browse, 1, 0);
-            AddWide(card, folderRow, 3);
-
-            card.Controls.Add(CreateLabel("Quality", TextColor), 0, 4);
-            card.Controls.Add(CreateLabel("File format", TextColor), 1, 4);
-            quality.Margin = new Padding(0, 0, 8, 0);
-            card.Controls.Add(quality, 0, 5);
-            card.Controls.Add(format, 1, 5);
-            AddWide(card, hint, 6);
-
-            AddWide(card, CreateLabel("Subtitles", TextColor), 7);
-            AddWide(card, captions, 8);
-            card.Controls.Add(CreateLabel("Category · optional", TextColor), 0, 9);
-            card.Controls.Add(CreateLabel("Series · optional", TextColor), 1, 9);
-            category.Margin = new Padding(0, 0, 8, 0);
-            card.Controls.Add(category, 0, 10);
-            card.Controls.Add(series, 1, 10);
-            AddWide(card, CreateLabel("Leave category or series blank to group automatically.", Secondary), 11);
-            AddWide(card, CreateActions(download, openFolder, play), 12);
-            return card;
-        }
 
         private Control CreateStatusPanel()
         {
-            var panel = Grid(2, new Padding(0, 9, 0, 0));
+            var panel = Grid(2, new Padding(12, 8, 12, 8));
+            panel.BackColor = StudioTheme.Surface;
+            panel.Margin = new Padding(0, 8, 0, 0);
             panel.AutoSize = true;
             panel.AutoSizeMode = AutoSizeMode.GrowAndShrink;
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
             panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 23));
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 15));
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 9));
             panel.RowCount = panel.RowStyles.Count;
 
             status.Font = new Font("Segoe UI Semibold", 11);
             panel.Controls.Add(status, 0, 0);
-            panel.Controls.Add(CreateActions(cancel, showDetails), 1, 0);
+            var commands = CreateActions(cancel, showDetails);
+            commands.AutoSize = true;
+            commands.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            panel.Controls.Add(commands, 1, 0);
             AddWide(panel, detail, 1);
             bar.Anchor = AnchorStyles.Left | AnchorStyles.Right;
-            bar.Height = 9;
+            bar.Height = 5;
             bar.AccessibleName = "Download progress";
             bar.Margin = Padding.Empty;
             AddWide(panel, bar, 2);
             return panel;
         }
 
-        private static Control CreateFooter()
-        {
-            return CreateLabel("Download videos you own or have permission to save.", Secondary);
-        }
+
+        private CollectionView libraryView;
 
         private Control CreateLibraryPanel()
         {
-            var panel = Grid(1, new Padding(19, 14, 19, 9));
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+            var panel = Grid(2, Padding.Empty);
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 23));
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
             panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 25));
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+            panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             panel.RowCount = panel.RowStyles.Count;
-            panel.Controls.Add(CreateLabel("Find by title, category, or series", TextColor), 0, 0);
+            panel.BackColor = StudioTheme.Canvas;
+            AddWide(panel, CreateLabel("Search by title, category or series", StudioTheme.Ink), 0);
+            search.Margin = new Padding(0, 0, 10, 0);
             panel.Controls.Add(search, 0, 1);
-            library.Dock = DockStyle.Fill;
-            library.Margin = Padding.Empty;
+            libraryRefresh.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            libraryRefresh.Margin = Padding.Empty;
+            panel.Controls.Add(libraryRefresh, 1, 1);
             library.AccessibleName = "Offline video library";
-            library.View = View.Details;
-            library.FullRowSelect = true;
-            library.MultiSelect = false;
-            library.HideSelection = false;
-            library.BackColor = Color.FromArgb(245, 248, 253);
-            library.ForeColor = Background;
             library.Columns.Add("Video", 435);
             library.Columns.Add("Subtitles", 95);
             library.Columns.Add("Saved on", 110);
-            DownloadListLayout.FitTitleColumn(library);
+            libraryView = new CollectionView(library, CollectionKind.Library);
+            libraryView.ShowMessage("Opening your library", "Looking for saved videos…");
             library.SelectedIndexChanged += delegate { UpdateLibraryButtons(); };
             library.ItemActivate += delegate {
                 var video = SelectedVideo();
                 if (video != null)
                     OpenPath(video.FilePath, false);
             };
-            panel.Controls.Add(library, 0, 2);
-            panel.Controls.Add(libraryInfo, 0, 3);
-            panel.Controls.Add(CreateActions(libraryPlay, libraryFolder, libraryTranslate, libraryRefresh), 0, 4);
+            AddWide(panel, libraryView, 2);
+            AddWide(panel, libraryInfo, 3);
+            var actions = CollectionView.RowActions(libraryPlay, libraryFolder, libraryTranslate);
+            AddWide(panel, actions, 4);
+            actions.Visible = false;
             libraryPlay.Click += delegate {
                 var video = SelectedVideo();
                 if (video != null)
@@ -459,7 +381,9 @@ namespace CustomYouTubeDownloader
             libraryScan = scan;
             string root = folder.Text.Trim();
             string filter = search.Text;
-            libraryInfo.Text = "Looking for saved videos…";
+            if (library.Items.Count == 0)
+                libraryView.ShowMessage("Opening your library", "Looking for saved videos…");
+            libraryInfo.Text = library.Items.Count == 0 ? "" : "Looking for saved videos…";
             try
             {
                 var videos = await Task.Run(() => VideoLibrary.Scan(root, filter, scan.Token), scan.Token);
@@ -471,7 +395,15 @@ namespace CustomYouTubeDownloader
             catch (Exception ex)
             {
                 if (libraryScan == scan && !IsDisposed && !Disposing)
-                    libraryInfo.Text = "Couldn’t open this library: " + ex.Message;
+                {
+                    library.Items.Clear();
+                    library.Groups.Clear();
+                    libraryPlay.Parent.Visible = false;
+                    libraryView.ShowMessage("Library unavailable", "Check the download folder or try scanning again.",
+                        "Try again", RefreshLibrary);
+                    libraryInfo.Text = ex.Message;
+                    UpdateLibraryButtons();
+                }
             }
             finally
             {
@@ -511,7 +443,7 @@ namespace CustomYouTubeDownloader
                     var item = new ListViewItem(new[] { video.Name, video.HasCaptions ? "Available" : "—", video.ModifiedAt.ToString("dd MMM yyyy") });
                     item.Group = group;
                     item.Tag = video;
-                    library.Items.Add(item);
+                    libraryView.AddRow(item);
                     if (selected != null && String.Equals(selected.FilePath, video.FilePath, StringComparison.OrdinalIgnoreCase))
                         item.Selected = true;
                 }
@@ -520,7 +452,16 @@ namespace CustomYouTubeDownloader
             {
                 library.EndUpdate();
             }
-            libraryInfo.Text = videos.Count == 0 ? "No videos found in this folder." :
+            if (videos.Count != 0)
+                libraryView.ShowRows();
+            else if (!String.IsNullOrWhiteSpace(search.Text))
+                libraryView.ShowMessage("No matching videos", "Try another title, category or series.",
+                    "Clear search", delegate { search.Clear(); search.Focus(); });
+            else
+                libraryView.ShowMessage("Your library is empty", "Videos saved in your download folder will appear here.",
+                    "Start a download", delegate { tabs.SelectedIndex = 0; url.Focus(); });
+            libraryPlay.Parent.Visible = videos.Count != 0;
+            libraryInfo.Text = videos.Count == 0 ? "" :
                 videos.Count + (videos.Count == 1 ? " video" : " videos") + " in " + groups.Count + (groups.Count == 1 ? " group" : " groups");
             UpdateLibraryButtons();
         }
@@ -963,15 +904,32 @@ namespace CustomYouTubeDownloader
             using (var dialog = new Form {
                 Text = "Video job details", ShowInTaskbar = false,
                 StartPosition = FormStartPosition.CenterParent,
-                ClientSize = new Size(680, 340), MinimizeBox = false, Font = Font
+                AutoScaleDimensions = new SizeF(96, 96), AutoScaleMode = AutoScaleMode.Dpi,
+                ClientSize = new Size(590, 340), MinimizeBox = false, Font = Font,
+                BackColor = StudioTheme.Canvas, ForeColor = StudioTheme.Ink
             })
             {
                 AppIdentity.SetWindowIcon(dialog);
+                var layout = Grid(1, new Padding(16));
+                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+                layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+                layout.RowCount = 3;
+                var title = CreateLabel("Job details", StudioTheme.Ink);
+                title.Font = new Font("Georgia", 18);
+                layout.Controls.Add(title, 0, 0);
                 var log = new TextBox {
                     Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
+                    AccessibleName = "Job details", BackColor = StudioTheme.Surface, ForeColor = StudioTheme.Ink,
                     Dock = DockStyle.Fill, Text = String.Join(Environment.NewLine + Environment.NewLine, operationDetails)
                 };
-                dialog.Controls.Add(log);
+                layout.Controls.Add(log, 0, 1);
+                var close = CreateButton("Close", false);
+                close.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
+                close.DialogResult = DialogResult.OK;
+                layout.Controls.Add(close, 0, 2);
+                dialog.Controls.Add(layout);
+                dialog.CancelButton = close;
                 dialog.ShowDialog(this);
             }
         }
@@ -998,10 +956,11 @@ namespace CustomYouTubeDownloader
 
         private void UpdateStatusVisibility()
         {
-            bool finding = tabs.SelectedIndex == 2 || tabs.SelectedIndex == 3;
-            bool showJob = !finding || activeDownload != null;
-            statusPanel.Visible = showJob;
-            footer.Visible = !finding;
+            cancel.Visible = activeDownload != null;
+            showDetails.Visible = showDetails.Enabled;
+            bar.Visible = activeDownload != null || bar.Value > 0;
+            statusPanel.Visible = activeDownload != null || (statusPage >= 0 &&
+                (tabs.SelectedIndex == statusPage || tabs.SelectedIndex == 0));
         }
 
         private void SetStatus(string title, string message, bool failed)
@@ -1009,6 +968,8 @@ namespace CustomYouTubeDownloader
             status.Text = title;
             status.ForeColor = failed ? Error : TextColor;
             detail.Text = message ?? "";
+            statusPage = tabs.SelectedIndex;
+            UpdateStatusVisibility();
         }
 
         private void FinishProgress(bool completed)
@@ -1147,7 +1108,7 @@ namespace CustomYouTubeDownloader
         internal static TextBox CreateInput(string name)
         {
             return new TextBox {
-                AccessibleName = name, BackColor = InputBackground, ForeColor = TextColor,
+                AccessibleName = name, BackColor = StudioTheme.Surface, ForeColor = TextColor,
                 BorderStyle = BorderStyle.FixedSingle, Dock = DockStyle.Fill, Margin = Padding.Empty
             };
         }
@@ -1155,17 +1116,19 @@ namespace CustomYouTubeDownloader
         internal static ComboBox CreateSelector(string name)
         {
             var box = new ComboBox {
-                AccessibleName = name, BackColor = InputBackground, ForeColor = TextColor,
+                AccessibleName = name, BackColor = StudioTheme.Surface, ForeColor = TextColor,
                 FlatStyle = FlatStyle.Flat, DropDownStyle = ComboBoxStyle.DropDownList,
                 Dock = DockStyle.Fill, Margin = Padding.Empty, DrawMode = DrawMode.OwnerDrawFixed
             };
             box.DrawItem += (sender, e) => {
                 bool selected = (e.State & DrawItemState.Selected) != 0;
-                using (var brush = new SolidBrush(selected ? Accent : InputBackground))
+                bool highlighted = selected && (e.State & DrawItemState.ComboBoxEdit) == 0;
+                using (var brush = new SolidBrush(highlighted ? StudioTheme.Accent : StudioTheme.Surface))
                     e.Graphics.FillRectangle(brush, e.Bounds);
                 if (e.Index >= 0)
                     TextRenderer.DrawText(e.Graphics, box.GetItemText(box.Items[e.Index]), box.Font, e.Bounds,
-                        selected ? Background : TextColor, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                        highlighted ? Color.White : TextColor, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis |
+                        TextFormatFlags.NoPrefix);
                 e.DrawFocusRectangle();
             };
             return box;
@@ -1181,32 +1144,7 @@ namespace CustomYouTubeDownloader
 
         internal static Button CreateButton(string text, bool primary)
         {
-            return new ActionButton {
-                Text = text, FlatStyle = FlatStyle.Flat, ForeColor = primary ? Background : TextColor,
-                BackColor = primary ? Accent : InputBackground, AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                Margin = new Padding(0, 0, 8, 0), Padding = new Padding(10, 0, 10, 0), UseVisualStyleBackColor = false
-            };
-        }
-
-        private sealed class ActionButton : Button
-        {
-            protected override void OnPaint(PaintEventArgs e)
-            {
-                var bounds = ClientRectangle;
-                using (var background = new SolidBrush(Enabled ? BackColor : PanelBackground))
-                    e.Graphics.FillRectangle(background, bounds);
-                if (BackColor == InputBackground || !Enabled)
-                {
-                    using (var outline = new Pen(Color.FromArgb(71, 92, 119)))
-                        e.Graphics.DrawRectangle(outline, 0, 0, bounds.Width - 1, bounds.Height - 1);
-                }
-                TextRenderer.DrawText(e.Graphics, Text, Font, bounds,
-                    Enabled ? ForeColor : Secondary,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-                if (Focused && ShowFocusCues)
-                    ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(bounds, -4, -4));
-            }
+            return new StudioButton(text, primary);
         }
     }
 }

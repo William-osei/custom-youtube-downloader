@@ -37,7 +37,7 @@ internal static class WindowLayoutTests
                     return 1;
                 }
             }
-            Console.WriteLine("Window sizing, fullscreen shortcuts, compact scrolling and icon checks passed.");
+            Console.WriteLine("Workspace navigation, fullscreen, compact scrolling and icon checks passed.");
             return 0;
         }
         catch (Exception ex)
@@ -69,6 +69,8 @@ internal static class WindowLayoutTests
         Require(screen.WorkingArea.Contains(form.Bounds), "The initial window extends outside the working area.");
         CheckIcon(form);
         var tabs = Descendants(form).OfType<TabControl>().Single();
+        Require(tabs.SelectedIndex == 0 && NavigationButton(form, 0).AccessibleDescription == "Current workspace",
+            "The initial Download workspace is missing its selection indicator.");
         var linkBox = Descendants(tabs.SelectedTab).OfType<TextBox>().Single(control => control.Multiline);
 
         form.Size = form.MinimumSize;
@@ -79,21 +81,24 @@ internal static class WindowLayoutTests
         var compactContent = page.Controls[0].Size;
         Require(page.DisplayRectangle.Height > page.ClientSize.Height, "The compact download page does not scroll.");
         var clipped = new List<string>();
+        await CheckNavigation(form, tabs);
         foreach (TabPage workspace in tabs.TabPages)
         {
-            tabs.SelectedTab = workspace;
+            NavigationButton(form, tabs.TabPages.IndexOf(workspace)).PerformClick();
             await Task.Yield();
-            foreach (var button in Descendants(workspace).OfType<Button>().Where(button => button.Visible))
+            Require(tabs.SelectedTab == workspace, "The sidebar did not open " + workspace.Text + ".");
+            foreach (var control in Descendants(workspace).Where(control => control.Visible &&
+                (control is Button || control is LinkLabel || control is ComboBox)))
             {
-                workspace.ScrollControlIntoView(button);
+                workspace.ScrollControlIntoView(control);
                 await Task.Yield();
-                var bounds = button.Parent.RectangleToScreen(button.Bounds);
-                for (Control parent = button.Parent; parent != workspace.Parent; parent = parent.Parent)
+                var bounds = control.Parent.RectangleToScreen(control.Bounds);
+                for (Control parent = control.Parent; parent != workspace.Parent; parent = parent.Parent)
                 {
                     var viewport = parent.RectangleToScreen(parent.ClientRectangle);
                     if (!viewport.Contains(bounds))
                     {
-                        clipped.Add(workspace.Text + " clipped " + button.Text + " at " + bounds + " inside " +
+                        clipped.Add(workspace.Text + " clipped " + (control.AccessibleName ?? control.Text) + " at " + bounds + " inside " +
                             parent.GetType().Name + " " + viewport + ".");
                         break;
                     }
@@ -113,6 +118,7 @@ internal static class WindowLayoutTests
         form.WindowState = FormWindowState.Maximized;
         await Task.Yield();
         Require(form.WindowState == FormWindowState.Maximized, "Maximize did not take effect.");
+        await CheckNavigation(form, tabs);
         if (page.Controls[0].Width > compactContent.Width)
             Require(linkBox.Width > normalLinkSize.Width, "The URL editor did not expand horizontally.");
         if (page.Controls[0].Height > compactContent.Height)
@@ -139,6 +145,59 @@ internal static class WindowLayoutTests
                     form.Font.SizeInPoints + "pt (" + normalBounds.Size + "):" + Environment.NewLine +
                     string.Join(Environment.NewLine, clipped));
         }
+
+        var start = Descendants(page).OfType<Button>().Single(b => b.Text == "Start downloads");
+        start.PerformClick();
+        await Task.Yield();
+        var guidance = Descendants(form).OfType<Label>().Single(l => l.Text.Contains("Paste at least one"));
+        Require(guidance.Visible && form.RectangleToScreen(form.ClientRectangle)
+            .Contains(guidance.RectangleToScreen(guidance.ClientRectangle)),
+            "The compact workspace hides validation feedback for an empty queue.");
+    }
+
+    private static Button NavigationButton(Form form, int index)
+    {
+        return Descendants(form).OfType<Button>().Single(control => control.Name == "nav" + index);
+    }
+
+    private static async Task CheckNavigation(Form form, TabControl tabs)
+    {
+        var previous = tabs.SelectedTab;
+        Require(tabs.TabCount == 5, "One or more workspaces are missing.");
+        for (int index = 0; index < tabs.TabCount; index++)
+        {
+            var button = NavigationButton(form, index);
+            Require(button.Visible && button.TabStop && button.CanSelect &&
+                button.AccessibleName == tabs.TabPages[index].Text,
+                "The keyboard or accessible name is missing for workspace " + index + ".");
+            var bounds = button.RectangleToScreen(button.ClientRectangle);
+            for (Control parent = button.Parent; parent != null; parent = parent.Parent)
+                Require(parent.RectangleToScreen(parent.ClientRectangle).Contains(bounds),
+                    "The sidebar clips the button for " + button.AccessibleName + ".");
+
+            tabs.SelectedIndex = (index + 1) % tabs.TabCount;
+            button.Select();
+            Key(button, Keys.Enter);
+            await Task.Yield();
+            Require(tabs.SelectedIndex == index, "Enter did not open " + button.AccessibleName + ".");
+            Require(button.AccessibleDescription == "Current workspace",
+                "The sidebar did not announce " + button.AccessibleName + " as the current workspace.");
+            int next = (index + 1) % tabs.TabCount;
+            Key(button, Keys.Control | (Keys)((int)Keys.D1 + next));
+            await Task.Yield();
+            Require(tabs.SelectedIndex == next, "Ctrl+" + (next + 1) + " did not open its workspace.");
+        }
+        tabs.SelectedIndex = tabs.TabCount - 1;
+        var last = NavigationButton(form, tabs.SelectedIndex);
+        last.Select();
+        Key(last, Keys.Control | Keys.Tab);
+        await Task.Yield();
+        Require(tabs.SelectedIndex == 0, "Ctrl+Tab did not wrap from the last page.");
+        Key(last, Keys.Control | Keys.Shift | Keys.Tab);
+        await Task.Yield();
+        Require(tabs.SelectedIndex == tabs.TabCount - 1, "Ctrl+Shift+Tab did not wrap from the first page.");
+        tabs.SelectedTab = previous;
+        await Task.Yield();
     }
 
     private static void Key(Control control, Keys key)

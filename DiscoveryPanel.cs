@@ -9,10 +9,6 @@ namespace CustomYouTubeDownloader
 {
     internal sealed class DiscoveryPanel : UserControl
     {
-        private static readonly Color Dark = Color.FromArgb(25, 37, 57);
-        private static readonly Color TextColor = Color.FromArgb(240, 246, 254);
-        private static readonly Color Secondary = Color.FromArgb(176, 191, 211);
-
         private readonly Func<string> toolsDirectory;
         private readonly Action<string> addYouTube;
         private readonly Func<CatalogMatch, string> saveMatch;
@@ -26,9 +22,12 @@ namespace CustomYouTubeDownloader
         private readonly Button add = DownloaderForm.CreateButton("Add YouTube link", false);
         private readonly Button save = DownloaderForm.CreateButton("Save to watchlist", false);
         private readonly Button check = DownloaderForm.CreateButton("Open search", true);
-        private readonly Label searchInfo = DownloaderForm.CreateLabel("Enter a title to search.", Secondary);
+        private readonly Label searchInfo = DownloaderForm.CreateLabel("", StudioTheme.Muted);
         private readonly TextBox summary = new TextBox();
+        private readonly RowStyle detailsRow = new RowStyle(SizeType.Absolute, 0);
         private readonly ListView results = new ListView();
+        private readonly CollectionView collection;
+        private readonly FlowLayoutPanel actions;
         private CancellationTokenSource pending;
         private string lastCompletedQuery;
 
@@ -39,7 +38,7 @@ namespace CustomYouTubeDownloader
             this.addYouTube = addYouTube;
             this.saveMatch = saveMatch;
             Dock = DockStyle.Fill;
-            BackColor = Dark;
+            BackColor = StudioTheme.Canvas;
 
             title.MaxLength = 140;
             type.Items.AddRange(new object[] { "Movies & series", "Movies", "TV series" });
@@ -56,28 +55,40 @@ namespace CustomYouTubeDownloader
                 if (((CountryChoice)region.Items[i]).Code == initialCountry)
                     region.SelectedIndex = i;
 
-            var layout = DownloaderForm.Grid(2, new Padding(18, 12, 18, 7));
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            foreach (int height in new[] { 22, 34, 22, 31, 24 })
-                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+            var layout = DownloaderForm.Grid(4, Padding.Empty);
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 46));
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 26));
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 28));
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 23));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 84));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 43));
-            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 16));
-            foreach (int height in new[] { 38, 23, 35, 21 })
-                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.RowStyles.Add(detailsRow);
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
             layout.RowCount = layout.RowStyles.Count;
-
-            AddWide(layout, DownloaderForm.CreateLabel("Movie or series title", TextColor), 0);
-            AddWide(layout, FieldWithButton(title, search, 150), 1);
-            layout.Controls.Add(DownloaderForm.CreateLabel("Type", TextColor), 0, 2);
-            layout.Controls.Add(DownloaderForm.CreateLabel("Country", TextColor), 1, 2);
-            type.Margin = new Padding(0, 0, 8, 0);
-            layout.Controls.Add(type, 0, 3);
-            layout.Controls.Add(region, 1, 3);
-            AddWide(layout, searchInfo, 4);
+            layout.Controls.Add(DownloaderForm.CreateLabel("Movie or series title", StudioTheme.Ink), 0, 0);
+            var typeLabel = DownloaderForm.CreateLabel("Type", StudioTheme.Ink);
+            var countryLabel = DownloaderForm.CreateLabel("Country", StudioTheme.Ink);
+            layout.Controls.Add(typeLabel, 1, 0);
+            layout.Controls.Add(countryLabel, 2, 0);
+            title.Margin = type.Margin = region.Margin = new Padding(0, 0, 10, 0);
+            layout.Controls.Add(title, 0, 1);
+            layout.Controls.Add(type, 1, 1);
+            layout.Controls.Add(region, 2, 1);
+            search.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            search.Margin = Padding.Empty;
+            layout.Controls.Add(search, 3, 1);
             ConfigureResults();
-            AddWide(layout, results, 5);
+            collection = new CollectionView(results, CollectionKind.Finder);
+            AddWide(layout, collection, 4);
+            searchInfo.AutoSize = true;
+            searchInfo.Margin = new Padding(0, 5, 0, 2);
+            AddWide(layout, searchInfo, 5);
 
             summary.AccessibleName = "Selected title description";
             summary.Dock = DockStyle.Fill;
@@ -86,15 +97,36 @@ namespace CustomYouTubeDownloader
             summary.ReadOnly = true;
             summary.ScrollBars = ScrollBars.Vertical;
             summary.BorderStyle = BorderStyle.None;
-            summary.BackColor = Dark;
-            summary.ForeColor = Secondary;
-            summary.Text = "Select a result for more information.";
+            summary.BackColor = StudioTheme.Canvas;
+            summary.ForeColor = StudioTheme.Ink;
+            summary.Visible = false;
             AddWide(layout, summary, 6);
-            layout.SetRowSpan(summary, 2);
-            AddWide(layout, DownloaderForm.CreateActions(open, official, add, save), 8);
-            AddWide(layout, DownloaderForm.CreateLabel("Check a streaming service or search the web", TextColor), 9);
-            AddWide(layout, FieldWithButton(service, check, 150), 10);
-            AddWide(layout, DownloaderForm.CreateLabel("Availability varies by country. Service searches open in your browser.", Secondary), 11);
+            actions = CollectionView.RowActions(open, official, add, save);
+            AddWide(layout, actions, 7);
+            AddWide(layout, DownloaderForm.CreateLabel("Search a streaming service or the web", StudioTheme.Ink), 8);
+            AddWide(layout, FieldWithButton(service, check, 140), 9);
+
+            bool? compactFilters = null;
+            layout.ClientSizeChanged += delegate {
+                bool compact = layout.ClientSize.Width < 590 * layout.DeviceDpi / 96;
+                if (compactFilters == compact)
+                    return;
+                compactFilters = compact;
+                layout.SuspendLayout();
+                try
+                {
+                    layout.SetCellPosition(typeLabel, new TableLayoutPanelCellPosition(compact ? 0 : 1, compact ? 2 : 0));
+                    layout.SetCellPosition(countryLabel, new TableLayoutPanelCellPosition(2, compact ? 2 : 0));
+                    layout.SetCellPosition(type, new TableLayoutPanelCellPosition(compact ? 0 : 1, compact ? 3 : 1));
+                    layout.SetCellPosition(region, new TableLayoutPanelCellPosition(2, compact ? 3 : 1));
+                    layout.SetColumnSpan(title, compact ? 3 : 1);
+                    layout.SetColumnSpan(type, compact ? 2 : 1);
+                    layout.SetColumnSpan(region, compact ? 2 : 1);
+                    layout.RowStyles[2].Height = compact ? layout.RowStyles[0].Height : 0;
+                    layout.RowStyles[3].Height = compact ? layout.RowStyles[1].Height : 0;
+                }
+                finally { layout.ResumeLayout(true); }
+            };
             Controls.Add(layout);
 
             title.TextChanged += delegate {
@@ -133,6 +165,9 @@ namespace CustomYouTubeDownloader
             };
             check.Click += CheckService;
             check.Enabled = false;
+            searchInfo.TextChanged += delegate { searchInfo.Visible = searchInfo.Text.Length != 0; };
+            searchInfo.Visible = false;
+            collection.ShowMessage("Find a movie or series", "Enter a title above to search the catalogs.");
             UpdateSelection();
         }
 
@@ -159,26 +194,18 @@ namespace CustomYouTubeDownloader
                 return;
             results.Items.Clear();
             lastCompletedQuery = null;
-            searchInfo.Text = "Enter a title and search the catalogs.";
+            searchInfo.Text = "";
+            collection.ShowMessage("Find a movie or series", "Enter a title above to search the catalogs.");
             UpdateSelection();
         }
 
         private void ConfigureResults()
         {
-            results.View = View.Details;
-            results.MultiSelect = false;
-            results.FullRowSelect = true;
-            results.HideSelection = false;
-            results.BackColor = Color.FromArgb(245, 248, 253);
-            results.ForeColor = Color.FromArgb(15, 23, 39);
-            results.Dock = DockStyle.Fill;
-            results.Margin = Padding.Empty;
             results.AccessibleName = "Movie and series search results";
             results.Columns.Add("Title", 370);
             results.Columns.Add("Year", 65);
             results.Columns.Add("Type", 100);
             results.Columns.Add("Source", 145);
-            DownloadListLayout.FitTitleColumn(results);
             results.SelectedIndexChanged += delegate { UpdateSelection(); };
             results.ItemActivate += delegate { open.PerformClick(); };
         }
@@ -205,8 +232,10 @@ namespace CustomYouTubeDownloader
             pending = active;
             title.Enabled = type.Enabled = region.Enabled = false;
             search.Text = "Cancel search";
-            searchInfo.Text = "Searching catalogs and YouTube…";
+            searchInfo.Text = "";
             results.Items.Clear();
+            collection.ShowMessage("Searching catalogs", "Looking for “" + query + "”…");
+            UpdateSelection();
             try
             {
                 var country = (CountryChoice)region.SelectedItem;
@@ -221,28 +250,39 @@ namespace CustomYouTubeDownloader
                     {
                         var row = new ListViewItem(new[] { match.Title, match.Year ?? "", match.Type, match.Source });
                         row.Tag = match;
-                        results.Items.Add(row);
+                        collection.AddRow(row);
                     }
                 }
                 finally { results.EndUpdate(); }
                 lastCompletedQuery = query;
                 int found = response.Matches.Count;
-                searchInfo.Text = found == 0 ? "No catalog matches. Try the web or a service below." :
+                if (found == 0)
+                    collection.ShowMessage("No matching titles", "Try a different title or search a streaming service below.");
+                else
+                    collection.ShowRows();
+                UpdateSelection();
+                searchInfo.Text = found == 0 ? "" :
                     found + (found == 1 ? " match" : " matches") + " · Select a title to see its links.";
                 if (response.Warnings.Count > 0)
-                    summary.Text = String.Join(Environment.NewLine, response.Warnings);
+                {
+                    SetSummary(String.Join(Environment.NewLine, response.Warnings));
+                }
             }
             catch (OperationCanceledException)
             {
                 if (!IsDisposed && !Disposing)
-                    searchInfo.Text = "Search cancelled.";
+                {
+                    searchInfo.Text = "";
+                    collection.ShowMessage("Search cancelled", "You can search again or enter a different title.");
+                }
             }
             catch (Exception ex)
             {
                 if (!IsDisposed && !Disposing)
                 {
-                    searchInfo.Text = "The catalogs couldn’t be searched. Try a service below.";
-                    summary.Text = ex.Message;
+                    searchInfo.Text = "";
+                    collection.ShowMessage("Catalogs unavailable", "Try again or search a streaming service below.");
+                    SetSummary(ex.Message);
                 }
             }
             finally
@@ -266,8 +306,18 @@ namespace CustomYouTubeDownloader
                 !String.Equals(match.Url, match.OfficialUrl, StringComparison.OrdinalIgnoreCase);
             add.Enabled = match != null && !String.IsNullOrWhiteSpace(match.YouTubeUrl);
             save.Enabled = match != null && WatchlistStore.IsPageLink(match.Url);
-            summary.Text = match == null ? "Select a result for more information." :
-                (String.IsNullOrWhiteSpace(match.Summary) ? match.Source + " catalog entry." : match.Summary);
+            actions.Visible = results.Items.Count != 0;
+            SetSummary(match == null ? "" :
+                (String.IsNullOrWhiteSpace(match.Summary) ? match.Source + " catalog entry." : match.Summary));
+        }
+
+        private void SetSummary(string text)
+        {
+            bool visible = !String.IsNullOrWhiteSpace(text);
+            detailsRow.SizeType = visible ? SizeType.Percent : SizeType.Absolute;
+            detailsRow.Height = visible ? 16 : 0;
+            summary.Text = text;
+            summary.Visible = visible;
         }
 
         private CatalogMatch Selected()

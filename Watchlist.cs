@@ -174,45 +174,40 @@ namespace CustomYouTubeDownloader
         private readonly WatchlistStore store;
         private readonly Action<WatchlistEntry> find;
         private readonly ListView list = new ListView();
-        private readonly Label info = DownloaderForm.CreateLabel("", Color.FromArgb(176, 191, 211));
+        private readonly Label info = DownloaderForm.CreateLabel("", StudioTheme.Muted);
+        private readonly CollectionView collection;
+        private readonly Action browse;
         private readonly Button open = DownloaderForm.CreateButton("Open saved link", true);
         private readonly Button search = DownloaderForm.CreateButton("Find this title", false);
         private readonly Button remove = DownloaderForm.CreateButton("Remove", false);
 
-        internal WatchlistPanel(WatchlistStore store, Action<WatchlistEntry> find)
+        internal WatchlistPanel(WatchlistStore store, Action<WatchlistEntry> find, Action browse = null)
         {
             this.store = store;
             this.find = find;
+            this.browse = browse;
             Dock = DockStyle.Fill;
-            BackColor = Color.FromArgb(25, 37, 57);
-            var layout = DownloaderForm.Grid(1, new Padding(18, 12, 18, 8));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+            BackColor = StudioTheme.Canvas;
+            var layout = DownloaderForm.Grid(1, new Padding(0));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowCount = layout.RowStyles.Count;
-            list.View = View.Details;
-            list.Dock = DockStyle.Fill;
-            list.Margin = new Padding(0, 0, 0, 8);
-            list.BackColor = Color.FromArgb(245, 248, 253);
-            list.ForeColor = Color.FromArgb(15, 23, 39);
-            list.FullRowSelect = true;
-            list.MultiSelect = false;
-            list.HideSelection = false;
             list.AccessibleName = "Saved movie and series titles";
             list.Columns.Add("Title", 380);
             list.Columns.Add("Year", 62);
             list.Columns.Add("Type", 110);
             list.Columns.Add("Source", 135);
             list.Columns.Add("Saved", 103);
-            DownloadListLayout.FitTitleColumn(list);
+            collection = new CollectionView(list, CollectionKind.Watchlist);
             list.SelectedIndexChanged += delegate { UpdateButtons(); };
             list.ItemActivate += delegate { open.PerformClick(); };
             open.Click += delegate { OpenSelected(); };
             search.Click += delegate { if (Selected() != null) find(Selected()); };
             remove.Click += delegate { RemoveSelected(); };
-            layout.Controls.Add(info, 0, 0);
-            layout.Controls.Add(list, 0, 1);
-            layout.Controls.Add(DownloaderForm.CreateActions(open, search, remove), 0, 2);
+            layout.Controls.Add(collection, 0, 0);
+            layout.Controls.Add(info, 0, 1);
+            layout.Controls.Add(CollectionView.RowActions(open, search, remove), 0, 2);
             Controls.Add(layout);
             Reload();
         }
@@ -245,17 +240,23 @@ namespace CustomYouTubeDownloader
                 {
                     var row = new ListViewItem(new[] { entry.Title, entry.Year ?? "", entry.Type ?? "", entry.Source ?? "", entry.SavedOn ?? "" });
                     row.Tag = entry;
-                    list.Items.Add(row);
+                    collection.AddRow(row);
                     if (selected != null && selected.Id == entry.Id)
                         row.Selected = true;
                 }
-                info.Text = entries.Count == 0 ? "Save a result from Find Movies & Series to build your watchlist." :
+                if (entries.Count == 0)
+                    collection.ShowMessage("Your watchlist is empty", "Save a movie or series from the finder to keep it here.",
+                        "Find a title", browse);
+                else
+                    collection.ShowRows();
+                info.Text = entries.Count == 0 ? "" :
                     entries.Count + (entries.Count == 1 ? " saved title" : " saved titles");
             }
             catch (Exception ex)
             {
                 if (!IsStorageError(ex))
                     throw;
+                collection.ShowMessage("Watchlist unavailable", "The saved titles could not be opened.", "Try again", Reload);
                 info.Text = ex.Message;
             }
             finally { list.EndUpdate(); }
@@ -296,6 +297,7 @@ namespace CustomYouTubeDownloader
 
         private void UpdateButtons()
         {
+            open.Parent.Visible = list.Items.Count != 0;
             open.Enabled = search.Enabled = remove.Enabled = Selected() != null;
         }
 

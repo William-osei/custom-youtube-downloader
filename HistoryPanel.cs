@@ -11,6 +11,11 @@ namespace CustomYouTubeDownloader
     {
         internal static void FitTitleColumn(ListView list)
         {
+            int lastDpi = 96;
+            bool resizingForDpi = false;
+            var widths = new float[list.Columns.Count];
+            for (int i = 1; i < widths.Length; i++)
+                widths[i] = list.Columns[i].Width;
             Action fit = delegate {
                 if (!list.IsHandleCreated || list.ClientSize.Width == 0)
                     return;
@@ -21,11 +26,26 @@ namespace CustomYouTubeDownloader
                 if (list.Columns[0].Width != width)
                     list.Columns[0].Width = width;
             };
-            list.HandleCreated += delegate { fit(); };
+            Action scale = delegate {
+                resizingForDpi = true;
+                lastDpi = list.DeviceDpi;
+                try {
+                    for (int i = 1; i < widths.Length; i++)
+                        list.Columns[i].Width = (int)Math.Round(widths[i] * lastDpi / 96f);
+                }
+                finally { resizingForDpi = false; }
+                fit();
+            };
+            list.HandleCreated += delegate { scale(); };
+            list.DpiChangedBeforeParent += delegate { resizingForDpi = true; };
+            list.DpiChangedAfterParent += delegate { scale(); };
             list.ClientSizeChanged += delegate { fit(); };
             list.ColumnWidthChanged += delegate(object sender, ColumnWidthChangedEventArgs e) {
-                if (e.ColumnIndex > 0)
+                if (e.ColumnIndex > 0 && !resizingForDpi && list.IsHandleCreated)
+                {
+                    widths[e.ColumnIndex] = list.Columns[e.ColumnIndex].Width * 96f / lastDpi;
                     fit();
+                }
             };
         }
     }
@@ -38,7 +58,9 @@ namespace CustomYouTubeDownloader
 
         private readonly ComboBox filter = DownloaderForm.CreateSelector("Filter download history");
         private readonly ListView list = new ListView();
-        private readonly Label description = DownloaderForm.CreateLabel("", Color.FromArgb(176, 191, 211));
+        private readonly Label description = DownloaderForm.CreateLabel("", StudioTheme.Muted);
+        private readonly CollectionView collection;
+        private readonly Action startDownload;
         private readonly Button play = DownloaderForm.CreateButton("Play video", true);
         private readonly Button open = DownloaderForm.CreateButton("Open folder", false);
         private readonly Button tryAgain = DownloaderForm.CreateButton("Retry video", false);
@@ -47,39 +69,36 @@ namespace CustomYouTubeDownloader
         private string storageIssue;
         private bool busy;
 
-        internal HistoryPanel(DownloadHistoryStore store, Action<DownloadHistoryEntry> retry, Action<string, bool> openPath)
+        internal HistoryPanel(DownloadHistoryStore store, Action<DownloadHistoryEntry> retry, Action<string, bool> openPath,
+            Action startDownload = null)
         {
             this.store = store;
             this.retry = retry;
             this.openPath = openPath;
-            BackColor = Color.FromArgb(25, 37, 57);
+            this.startDownload = startDownload;
+            BackColor = StudioTheme.Canvas;
             Dock = DockStyle.Fill;
-            var card = DownloaderForm.Grid(1, new Padding(18, 12, 18, 8));
-            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 25));
-            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 33));
+            var card = DownloaderForm.Grid(1, Padding.Empty);
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 23));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 39));
             card.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
-            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             card.RowCount = card.RowStyles.Count;
-            card.Controls.Add(DownloaderForm.CreateLabel("Recent downloads", Color.FromArgb(240, 246, 254)), 0, 0);
+            card.Controls.Add(DownloaderForm.CreateLabel("Filter by status", StudioTheme.Ink), 0, 0);
             filter.Items.AddRange(new object[] { "All attempts", "Saved videos", "Needs retry" });
             filter.SelectedIndex = 0;
+            filter.Dock = DockStyle.None;
+            filter.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            filter.Width = 190;
             card.Controls.Add(filter, 0, 1);
 
-            list.Dock = DockStyle.Fill;
-            list.Margin = Padding.Empty;
-            list.View = View.Details;
-            list.FullRowSelect = true;
-            list.MultiSelect = false;
-            list.HideSelection = false;
-            list.BackColor = Color.FromArgb(245, 248, 253);
-            list.ForeColor = Color.FromArgb(15, 23, 39);
             list.AccessibleName = "Download history";
             list.Columns.Add("Video", 330);
             list.Columns.Add("Status", 116);
             list.Columns.Add("Format", 128);
             list.Columns.Add("Started", 150);
-            DownloadListLayout.FitTitleColumn(list);
+            collection = new CollectionView(list, CollectionKind.History);
             list.ShowItemToolTips = true;
             list.SelectedIndexChanged += delegate { UpdateSelection(); };
             list.ItemActivate += delegate { if (play.Enabled) play.PerformClick(); };
@@ -115,9 +134,9 @@ namespace CustomYouTubeDownloader
                 }
                 catch (ExternalException) { description.Text = "Windows couldn’t copy the link. Try again."; }
             };
-            card.Controls.Add(list, 0, 2);
+            card.Controls.Add(collection, 0, 2);
             card.Controls.Add(description, 0, 3);
-            card.Controls.Add(DownloaderForm.CreateActions(play, open, tryAgain, copy), 0, 4);
+            card.Controls.Add(CollectionView.RowActions(play, open, tryAgain, copy), 0, 4);
             Controls.Add(card);
             UpdateSelection();
         }
@@ -174,7 +193,9 @@ namespace CustomYouTubeDownloader
                     row.Tag = entry;
                     row.ToolTipText = String.IsNullOrWhiteSpace(entry.Note) ? entry.Title :
                         entry.Title + Environment.NewLine + entry.Note;
-                    list.Items.Add(row);
+                    collection.AddRow(row);
+                    if (entry.State == HistoryState.Completed && !SystemInformation.HighContrast)
+                        row.SubItems[1].ForeColor = StudioTheme.Accent;
                     if (old != null && old.Id == entry.Id)
                         row.Selected = true;
                 }
@@ -191,10 +212,20 @@ namespace CustomYouTubeDownloader
             open.Enabled = ExistingFolder(entry) != null;
             tryAgain.Enabled = !busy && entry != null && CanRetry(entry.State);
             copy.Enabled = entry != null && !String.IsNullOrWhiteSpace(entry.Url);
+            play.Parent.Visible = list.Items.Count != 0;
+            if (list.Items.Count != 0)
+                collection.ShowRows();
+            else if (storageIssue != null)
+                collection.ShowMessage("History unavailable", "Your download history could not be read.", "Try again", Reload);
+            else if (filter.SelectedIndex != 0)
+                collection.ShowMessage("No matching downloads", "There are no attempts with this status.",
+                    "Show all attempts", delegate { filter.SelectedIndex = 0; });
+            else
+                collection.ShowMessage("No downloads yet", "Downloads you start will appear here.", "Start a download", startDownload);
             if (storageIssue != null)
                 description.Text = storageIssue;
             else if (entry == null)
-                description.Text = list.Items.Count == 0 ? "No download attempts in this view." :
+                description.Text = list.Items.Count == 0 ? "" :
                     list.Items.Count + (list.Items.Count == 1 ? " attempt" : " attempts") + " · Select a video for details.";
             else if (entry.State == HistoryState.Completed && file == null)
                 description.Text = "The saved file has moved or is unavailable.";

@@ -11,11 +11,13 @@ To update an existing copy, close the app and extract the new ZIP into the same 
 ## Use the app
 
 1. Open **Custom YouTube Downloader** from your desktop shortcut or run the executable in this project folder.
-2. Paste a YouTube video, Shorts, or playlist link. For a batch, paste one link per line. Choose a download folder or use **Downloads\Offline Videos**.
+2. In **Download**, paste a YouTube video, Shorts, or playlist link, or choose **Paste links** to append links from the clipboard. For a batch, use one link per line. Choose a download folder or use **Downloads\Offline Videos**.
 3. Choose the video quality, file format, and subtitle option. Enter a category and series to choose where to group the batch, or leave them blank for automatic folders.
 4. Click **Start downloads**. Open **Library** to search, play a saved video, or find its files. **Details** shows the result of each job.
 
-Maximize the window to use the desktop work area, or press **F11** for full screen. Press **Esc** or **F11** to return to your previous window size. On short displays, scroll inside the tab to reach the remaining controls.
+Use the sidebar or **Ctrl+1** through **Ctrl+5** to switch between Download, Library, Discover, Watchlist, and History. **Ctrl+Tab** moves to the next workspace and **Ctrl+Shift+Tab** moves back. The sidebar switches to icons in narrow windows, and the settings stack vertically.
+
+Maximize the window to use the desktop work area, or press **F11** for full screen. Press **Esc** or **F11** to return to your previous window size. On short displays, scroll inside the workspace to reach the remaining controls.
 
 ## Full playlists
 
@@ -29,7 +31,7 @@ History stays on this computer and keeps the most recent 200 finished entries. V
 
 ## Find movies and series
 
-Open **Find Movies & Series**, type a title, pick **Movies**, **TV series**, or both, and select a country. In-app results come from [Wikidata](https://www.wikidata.org/), [TVmaze](https://www.tvmaze.com/api), [the Apple storefront](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/), [Internet Archive](https://archive.org/), and YouTube where relevant. Internet Archive and YouTube listings can be clips, trailers, or other related material. A catalog result identifies a title and does not establish streaming availability.
+Open **Discover**, type a title, pick **Movies**, **TV series**, or both, and select a country. In-app results come from [Wikidata](https://www.wikidata.org/), [TVmaze](https://www.tvmaze.com/api), [the Apple storefront](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/), [Internet Archive](https://archive.org/), and YouTube where relevant. Internet Archive and YouTube listings can be clips, trailers, or other related material. A catalog result identifies a title and does not establish streaming availability.
 
 Select a result to open its source or official site. The **Open search** button checks sites such as JustWatch, Netflix, Prime Video, Apple TV, and Plex in your browser, even if the catalogs return nothing. **Web · where to watch** searches the wider web using your country. Some streaming services require you to sign in to see their results.
 
@@ -63,11 +65,20 @@ Use 64-bit Windows with .NET Framework 4.8 and Node.js 22 or later. From PowerSh
 
 The first script installs the local yt-dlp, FFmpeg, and FFprobe tools. The second adds the optional offline speech model (about 148 MB). It is needed for generating English subtitles from audio. Run **Custom YouTube Downloader.exe** after building and keep `tools` beside it. The repository excludes binaries, downloaded media, and local app settings, including history and watchlist files.
 
-Run `.\test.ps1` to check caption selection and the Windows layout. Run `.\package.ps1` to build the versioned release ZIP under `bin`. Published releases link the Windows download to its tagged source commit.
+Run `.\test.ps1` to check caption selection, keyboard navigation and window layouts. Commit and push each tested update to GitHub. For a new version, set `AppIdentity.Version`, tag the release commit, and publish the Windows ZIP built from that tag with `.\package.ps1`.
 
 Private playlists, rentals, and other restricted or unavailable videos may not download. [YouTube terms](https://www.youtube.com/t/terms)
 
-## App icon
+## App artwork
+
+The Download studio header uses [film-reel.jpg](assets/film-reel.jpg), generated with the built-in ImageGen tool.
+
+<details>
+<summary>Film-reel artwork prompt</summary>
+
+Use case: photorealistic editorial still life. Asset: widescreen photographic print for the masthead of an elegant film library desktop application. Panoramic 3:1 horizontal image, approximately 1536x512. On a deep petroleum-green matte studio tabletop sits a dramatic large vintage brushed-silver 35mm cinema film reel with broad circular cutouts, wound dark amber translucent acetate film unspooling and curling to the right into a single graceful loop. Top down three-quarter close-up with sharp tactile grain and warm illuminated edges, analog cinema journal art direction. Put ALL of the reel on the far right half of the image, artistically cropped at the high right corner, with film in the middle right. Left 55% of the image is dark deep evergreen empty subtle gradient / tabletop, calm room for overlay text. Rich black-green and warm copper, high contrast, sophisticated. No text, letters, logos, graphic frames, badges, people or watermarks.
+
+</details>
 
 The built-in image generator created `assets/app-icon.png`. The Windows icon in `assets/app-icon.ico` includes twelve sizes from 16 to 256 pixels, including 20, 28, 40 and 56 pixels for fractional display scales.
 

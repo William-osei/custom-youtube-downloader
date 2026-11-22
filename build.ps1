@@ -22,9 +22,12 @@ $watchlistSource = Join-Path $PSScriptRoot 'Watchlist.cs'
 $historySource = Join-Path $PSScriptRoot 'DownloadHistory.cs'
 $historyPanelSource = Join-Path $PSScriptRoot 'HistoryPanel.cs'
 $identitySource = Join-Path $PSScriptRoot 'AppIdentity.cs'
+$studioSources = @('StudioTheme.cs', 'StudioShell.cs', 'DownloadWorkspace.cs', 'CollectionView.cs') |
+    ForEach-Object { Join-Path $PSScriptRoot $_ }
+$film = Join-Path $PSScriptRoot 'assets\film-reel.jpg'
 $icon = Join-Path $PSScriptRoot 'assets\app-icon.ico'
 $manifest = Join-Path $PSScriptRoot 'app.manifest'
-& $compiler /nologo /target:winexe /platform:anycpu /optimize+ /codepage:65001 "/out:$output" "/win32icon:$icon" "/win32manifest:$manifest" "/resource:$icon,CustomYouTubeDownloader.AppIcon.ico" /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll $mainSource $workerSource $captionSource $librarySource $playlistSource $catalogSource $discoverySource $preferencesSource $watchlistSource $historySource $historyPanelSource $identitySource
+& $compiler /nologo /target:winexe /platform:anycpu /optimize+ /codepage:65001 "/out:$output" "/win32icon:$icon" "/win32manifest:$manifest" "/resource:$icon,CustomYouTubeDownloader.AppIcon.ico" "/resource:$film,CustomYouTubeDownloader.Film.jpg" /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll $mainSource $workerSource $captionSource $librarySource $playlistSource $catalogSource $discoverySource $preferencesSource $watchlistSource $historySource $historyPanelSource $identitySource @studioSources
 if ($LASTEXITCODE -ne 0) { throw 'The application could not be built.' }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'App.config') -Destination "$output.config" -Force
 Get-Item -LiteralPath $output
