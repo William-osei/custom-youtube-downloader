@@ -88,20 +88,21 @@ namespace CustomYouTubeDownloader
                         Report(progress, "Looking for YouTube subtitles…", null);
                         var tracks = ReadTracks(tools, node, source, stage, token);
                         string originalTag = wantOriginal ? ChooseOriginal(tracks) : null;
-                        string englishTag = wantEnglish && !englishReady ? ChooseEnglish(tracks) : null;
-                        if (originalTag != null && IsEnglish(originalTag))
+                        if (originalTag != null)
                         {
-                            if (englishReady)
+                            string originalPath = stem + "." + LanguageFileTag(originalTag) + ".srt";
+                            if (HasCues(originalPath))
                             {
+                                files.Add(originalPath);
                                 originalReady = true;
-                                files.Add(englishPath);
+                                if (wantEnglish && IsEnglish(originalTag))
+                                    englishReady = true;
                                 originalTag = null;
                             }
-                            else if (englishTag != null)
-                            {
-                                originalTag = englishTag;
-                            }
                         }
+                        string englishTag = wantEnglish && !englishReady ? ChooseEnglish(tracks) : null;
+                        if (originalTag != null && IsEnglish(originalTag) && englishTag != null)
+                            originalTag = englishTag;
 
                         var requests = new[] { originalTag, englishTag }.Where(tag => tag != null)
                             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -250,12 +251,8 @@ namespace CustomYouTubeDownloader
         {
             var originalAutos = tracks.Auto.Where(tag => tag.EndsWith("-orig", StringComparison.OrdinalIgnoreCase)).ToList();
             string native = tracks.Language;
-            if (originalAutos.Count > 0)
-            {
-                var exact = originalAutos.FirstOrDefault(tag => WithoutOriginalSuffix(tag).Equals(native, StringComparison.OrdinalIgnoreCase));
-                var sameLanguage = originalAutos.FirstOrDefault(tag => SameLanguage(tag, native));
-                native = WithoutOriginalSuffix(exact ?? sameLanguage ?? originalAutos[0]);
-            }
+            if (native == null && originalAutos.Count > 0)
+                native = WithoutOriginalSuffix(originalAutos[0]);
             if (native == null)
                 return tracks.Manual.Count == 1 ? tracks.Manual[0] : null;
 
