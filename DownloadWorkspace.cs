@@ -13,6 +13,7 @@ namespace CustomYouTubeDownloader
             var source = new DownloadCard();
             source.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
             source.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            source.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
             var sourceHeading = Grid(3, Padding.Empty);
             sourceHeading.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             sourceHeading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -34,12 +35,23 @@ namespace CustomYouTubeDownloader
             source.Controls.Add(sourceHeading, 0, 0);
             url.AccessibleDescription = "Enter one YouTube video or playlist URL per line.";
             source.Controls.Add(DownloadInput(url), 0, 1);
+            var queue = Grid(2, new Padding(0, 5, 0, 0));
+            queue.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            queue.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            var parallelLabel = CreateLabel("Simultaneous downloads", StudioTheme.Ink);
+            parallelLabel.AutoSize = true;
+            parallelLabel.Margin = new Padding(0, 0, 8, 0);
+            queue.Controls.Add(parallelLabel, 0, 0);
+            queue.Controls.Add(parallelDownloads, 1, 0);
+            source.Controls.Add(queue, 0, 2);
 
             var video = DownloadSettingsCard("Video settings");
             AddDownloadField(video, "Quality", quality, 1);
             AddDownloadField(video, "Format", format, 3);
             AddDownloadField(video, "Subtitles", captions, 5);
-            video.Controls.Add(hint, 0, 7);
+            video.RowStyles.Insert(7, new RowStyle(SizeType.Absolute, 28));
+            video.Controls.Add(englishAudio, 0, 7);
+            video.Controls.Add(hint, 0, 8);
 
             var storage = DownloadSettingsCard("Folders");
             var destination = Grid(2, Padding.Empty);
@@ -197,22 +209,23 @@ namespace CustomYouTubeDownloader
                 int width = ClientSize.Width;
                 bool stacked = width < Pixels(566);
                 int gap = Pixels(10);
-                int optionsHeight = Pixels(247);
+                int videoHeight = Pixels(275);
+                int storageHeight = stacked ? Pixels(247) : videoHeight;
                 int actionHeight = Math.Max(Pixels(38), actions.Controls[0].GetPreferredSize(Size.Empty).Height);
-                int fixedHeight = (stacked ? optionsHeight * 2 + gap : optionsHeight) + gap * 2 + actionHeight;
-                var minimum = new Size(Pixels(342), fixedHeight + Pixels(100));
+                int fixedHeight = videoHeight + (stacked ? storageHeight + gap : 0) + gap * 2 + actionHeight;
+                var minimum = new Size(Pixels(342), fixedHeight + Pixels(133));
                 if (MinimumSize != minimum)
                     MinimumSize = minimum;
                 var page = Parent as TabPage;
                 if (page != null && page.AutoScrollMinSize != minimum)
                     page.AutoScrollMinSize = minimum;
-                int composerHeight = Math.Max(Pixels(100), ClientSize.Height - fixedHeight);
+                int composerHeight = Math.Max(Pixels(133), ClientSize.Height - fixedHeight);
                 source.SetBounds(0, 0, width, composerHeight);
                 int top = composerHeight + gap;
                 int leftWidth = stacked ? width : (width - gap) / 2;
-                video.SetBounds(0, top, leftWidth, optionsHeight);
-                storage.SetBounds(stacked ? 0 : leftWidth + gap, stacked ? top + optionsHeight + gap : top,
-                    stacked ? width : width - leftWidth - gap, optionsHeight);
+                video.SetBounds(0, top, leftWidth, videoHeight);
+                storage.SetBounds(stacked ? 0 : leftWidth + gap, stacked ? top + videoHeight + gap : top,
+                    stacked ? width : width - leftWidth - gap, storageHeight);
                 actions.SetBounds(0, storage.Bottom + gap, width, actionHeight);
             }
         }

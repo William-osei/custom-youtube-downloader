@@ -12,14 +12,16 @@ To update an existing copy, close the app and extract the new ZIP into the same 
 
 1. Open **Custom YouTube Downloader** from your desktop shortcut or run the executable in this project folder.
 2. In **Download**, paste a YouTube video, Shorts, or playlist link, or choose **Paste links** to append links from the clipboard. For a batch, use one link per line. Choose a download folder or use **Downloads\Offline Videos**.
-3. Choose the video quality, file format, and subtitle option. Enter a category and series to choose where to group the batch, or leave them blank for automatic folders.
+3. Choose the video quality, file format, and subtitle option. Turn on **Add English audio (synthetic voice)** if you want a dubbed copy. Enter a category and series to choose where to group the batch, or leave them blank for automatic folders.
 4. Click **Start downloads**. Open **Library** to search, play a saved video, or find its files. **Details** shows the result of each job.
 
 Use the sidebar or **Ctrl+1** through **Ctrl+5** to switch between Download, Library, Discover, Watchlist, and History. **Ctrl+Tab** moves to the next workspace and **Ctrl+Shift+Tab** moves back. The sidebar switches to icons in narrow windows, and the settings stack vertically.
 
 Maximize the window to use the desktop work area, or press **F11** for full screen. Press **Esc** or **F11** to return to your previous window size. On short displays, scroll inside the workspace to reach the remaining controls.
 
-## Full playlists
+## Simultaneous downloads and playlists
+
+**Simultaneous downloads** accepts 1 through 4, with 3 selected by default. Paste multiple links or a playlist, then select **Start downloads** once. The app fills available download slots as videos finish. The status area shows how many items have finished and which are downloading or processing. Subtitle and voice processing run one video at a time alongside the transfers. **Cancel** stops the batch and leaves finished files in the library.
 
 To download a full playlist, copy the link from the playlist page or its **Share** button. A link to a video inside a playlist still downloads the selected video. You can mix playlists and individual videos in the same batch. The app saves available playlist entries in a folder named after the playlist and numbers their files in playlist order. A custom series name replaces the playlist title. Unavailable entries are counted in **Details**.
 
@@ -28,6 +30,14 @@ To download a full playlist, copy the link from the playlist page or its **Share
 **History** tracks recent videos that started downloading. Filter to **Saved videos** or **Needs retry**, then select a row to play the file, open its folder, or copy its YouTube link. **Retry video** tries one failed, cancelled, or interrupted video using its original quality, format, subtitle choice, folder, and playlist number. If the downloader still has the matching partial file, it can resume from that file.
 
 History stays on this computer and keeps the most recent 200 finished entries. Videos saved before this feature still appear in **Library**. A saved video stays available even if its subtitle job is interrupted.
+
+If English audio is interrupted, open **History → Needs retry**. Choose **Play original** to watch the saved video or **Retry English audio** to finish the dub. The app can reuse the original from its download folder.
+
+## English audio
+
+Enable **Add English audio (synthetic voice)** in Download, or select an existing MP4 or MKV in **Library** and choose **Create English audio**. The app saves a second video with `[English dub]` in its filename. Its default track speaks the dialogue in a Windows English voice. Your player’s audio menu lets you switch to the original soundtrack, including its voices, music and effects. The copy also includes an English subtitle track.
+
+The narration follows the timestamps in the English subtitles. The app can reuse a local `.en.srt`, fetch available English captions for a download, or translate the speech locally using the multilingual model installed by `.\setup-translation.ps1`. An installed English Windows desktop speech voice is required. For a correction, edit the English SRT before creating the dub. Translation quality depends on the language, audio clarity and captions.
 
 ## Find movies and series
 
@@ -45,7 +55,7 @@ Select a finder result and click **Save to watchlist**. In **Watchlist**, use **
 
 Choose **Original YouTube captions**, **English subtitles**, or **Original + English**. When YouTube has English captions, the app can use those, including automatic translations YouTube offers. If it can't fetch English captions, the app generates timed English subtitles from the audio on this laptop. In **Library**, select an existing video and click **Generate English subtitles** to do this without downloading it again.
 
-Subtitles are saved as `.srt` files alongside the video. When VLC is installed, **Play video** loads the English subtitle file if one is present. You can also open the video in your preferred player and load the SRT manually. Local speech translation supports many languages, and the result depends on audio clarity and the language. Long videos may take time to process. The video audio does not change.
+Subtitles are saved as `.srt` files alongside the video. When VLC is installed, **Play video** loads the English subtitle file if one is present. You can also open the video in your preferred player and load the SRT manually. Local speech translation supports many languages and can take time on long videos.
 
 ## Library folders
 
@@ -65,7 +75,7 @@ Use 64-bit Windows with .NET Framework 4.8 and Node.js 22 or later. From PowerSh
 
 The first script installs the local yt-dlp, FFmpeg, and FFprobe tools. The second adds the optional offline speech model (about 148 MB). It is needed for generating English subtitles from audio. Run **Custom YouTube Downloader.exe** after building and keep `tools` beside it. The repository excludes binaries, downloaded media, and local app settings, including history and watchlist files.
 
-Run `.\test.ps1` to check caption selection, keyboard navigation and window layouts. Commit and push each tested update to GitHub. For a new version, set `AppIdentity.Version`, tag the release commit, and publish the Windows ZIP built from that tag with `.\package.ps1`.
+Run `.\test.ps1` to check caption selection, keyboard navigation, layouts, overlapping downloads, cancellation and retries. With the media engines and an English voice installed, `.\test.ps1 -Media` also checks real MP4 and MKV narration, timing and preservation of the original streams. Commit and push each tested update to GitHub. For a new version, set `AppIdentity.Version`, tag the release commit, and publish the Windows ZIP built from that tag with `.\package.ps1`.
 
 Private playlists, rentals, and other restricted or unavailable videos may not download. [YouTube terms](https://www.youtube.com/t/terms)
 

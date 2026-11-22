@@ -10,13 +10,15 @@ using System.Windows.Forms;
 
 [assembly: TargetFramework(".NETFramework,Version=v4.8")]
 
-internal static class WindowLayoutTests
+internal static partial class WindowLayoutTests
 {
     [STAThread]
     private static int Main(string[] args)
     {
         try
         {
+            if (Path.GetFileNameWithoutExtension(Assembly.GetExecutingAssembly().Location) == "yt-dlp")
+                return RunDownloadFixture(args);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             using (var form = CreateForm(Assembly.LoadFrom(args[0]), args[1]))
@@ -26,7 +28,11 @@ internal static class WindowLayoutTests
                 Exception failure = null;
                 form.Shown += async delegate
                 {
-                    try { await CheckWindow(form); }
+                    try
+                    {
+                        await CheckWindow(form);
+                        await CheckDownloadQueue(form, args[1]);
+                    }
                     catch (Exception ex) { failure = ex; }
                     finally { form.Close(); }
                 };
@@ -37,7 +43,7 @@ internal static class WindowLayoutTests
                     return 1;
                 }
             }
-            Console.WriteLine("Workspace navigation, fullscreen, compact scrolling and icon checks passed.");
+            Console.WriteLine("Window, bounded batch, cancellation and saved-original retry checks passed.");
             return 0;
         }
         catch (Exception ex)
@@ -72,6 +78,11 @@ internal static class WindowLayoutTests
         Require(tabs.SelectedIndex == 0 && NavigationButton(form, 0).AccessibleDescription == "Current workspace",
             "The initial Download workspace is missing its selection indicator.");
         var linkBox = Descendants(tabs.SelectedTab).OfType<TextBox>().Single(control => control.Multiline);
+        var audio = Descendants(tabs.SelectedTab).OfType<CheckBox>().Single(c => c.AccessibleName == "Add English audio");
+        var concurrency = Descendants(tabs.SelectedTab).OfType<NumericUpDown>()
+            .Single(c => c.AccessibleName == "Simultaneous downloads");
+        Require(!audio.Checked && concurrency.Minimum == 1 && concurrency.Maximum == 4 && concurrency.Value == 3,
+            "A fresh profile should use original audio and three parallel downloads.");
 
         form.Size = form.MinimumSize;
         await Task.Yield();
@@ -88,7 +99,8 @@ internal static class WindowLayoutTests
             await Task.Yield();
             Require(tabs.SelectedTab == workspace, "The sidebar did not open " + workspace.Text + ".");
             foreach (var control in Descendants(workspace).Where(control => control.Visible &&
-                (control is Button || control is LinkLabel || control is ComboBox)))
+                (control is Button || control is LinkLabel || control is ComboBox || control is CheckBox ||
+                 control is NumericUpDown)))
             {
                 workspace.ScrollControlIntoView(control);
                 await Task.Yield();

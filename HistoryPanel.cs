@@ -183,7 +183,8 @@ namespace CustomYouTubeDownloader
                 list.Items.Clear();
                 foreach (var entry in entries)
                 {
-                    if ((filter.SelectedIndex == 1 && entry.State != HistoryState.Completed) ||
+                    if ((filter.SelectedIndex == 1 && entry.State != HistoryState.Completed &&
+                            entry.State != HistoryState.AudioPending) ||
                         (filter.SelectedIndex == 2 && !CanRetry(entry.State)))
                         continue;
                     string videoFormat = entry.CompatibleMp4 ? "MP4" : "MKV";
@@ -208,6 +209,9 @@ namespace CustomYouTubeDownloader
         {
             var entry = Selected();
             string file = VideoFile(entry);
+            bool audioPending = entry != null && entry.State == HistoryState.AudioPending;
+            play.Text = audioPending ? "Play original" : "Play video";
+            tryAgain.Text = audioPending && file != null ? "Retry English audio" : "Retry video";
             play.Enabled = file != null;
             open.Enabled = ExistingFolder(entry) != null;
             tryAgain.Enabled = !busy && entry != null && CanRetry(entry.State);
@@ -227,6 +231,8 @@ namespace CustomYouTubeDownloader
             else if (entry == null)
                 description.Text = list.Items.Count == 0 ? "" :
                     list.Items.Count + (list.Items.Count == 1 ? " attempt" : " attempts") + " · Select a video for details.";
+            else if (audioPending && file == null)
+                description.Text = "The original video has moved. Retry to download it again and add English audio.";
             else if (entry.State == HistoryState.Completed && file == null)
                 description.Text = "The saved file has moved or is unavailable.";
             else
@@ -240,7 +246,8 @@ namespace CustomYouTubeDownloader
 
         private static bool CanRetry(HistoryState state)
         {
-            return state == HistoryState.Failed || state == HistoryState.Cancelled || state == HistoryState.Interrupted;
+            return state == HistoryState.Failed || state == HistoryState.Cancelled || state == HistoryState.Interrupted ||
+                state == HistoryState.AudioPending;
         }
 
         private static string Status(HistoryState state)
@@ -251,6 +258,7 @@ namespace CustomYouTubeDownloader
                 case HistoryState.Completed: return "Saved";
                 case HistoryState.Failed: return "Failed";
                 case HistoryState.Cancelled: return "Cancelled";
+                case HistoryState.AudioPending: return "Audio pending";
                 default: return "Interrupted";
             }
         }
@@ -272,9 +280,10 @@ namespace CustomYouTubeDownloader
             }
         }
 
-        private static string VideoFile(DownloadHistoryEntry entry)
+        internal static string VideoFile(DownloadHistoryEntry entry)
         {
-            if (entry == null || entry.State != HistoryState.Completed || String.IsNullOrWhiteSpace(entry.FilePath))
+            if (entry == null || (entry.State != HistoryState.Completed && entry.State != HistoryState.AudioPending) ||
+                    String.IsNullOrWhiteSpace(entry.FilePath))
                 return null;
             string folder = ExistingFolder(entry);
             if (folder == null)

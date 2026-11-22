@@ -14,7 +14,8 @@ namespace CustomYouTubeDownloader
         Completed,
         Failed,
         Cancelled,
-        Interrupted
+        Interrupted,
+        AudioPending
     }
 
     internal sealed class DownloadHistoryEntry
@@ -34,6 +35,7 @@ namespace CustomYouTubeDownloader
         public int MaxHeight { get; set; }
         public bool CompatibleMp4 { get; set; }
         public CaptionMode Captions { get; set; }
+        public bool EnglishAudio { get; set; }
         public int PlaylistPosition { get; set; }
     }
 
@@ -84,8 +86,10 @@ namespace CustomYouTubeDownloader
                 {
                     if (item.State != HistoryState.Running)
                         continue;
-                    item.State = HistoryState.Interrupted;
-                    item.Note = "The app closed before this job finished.";
+                    bool hasOriginal = item.EnglishAudio && item.FilePath != null;
+                    item.State = hasOriginal ? HistoryState.AudioPending : HistoryState.Interrupted;
+                    item.Note = hasOriginal ? "Original video saved. The app closed before the English audio finished." :
+                        "The app closed before this job finished.";
                     changed = true;
                 }
                 if (changed)
@@ -190,7 +194,8 @@ namespace CustomYouTubeDownloader
             string file = OptionalPath(entry.FilePath);
             if ((destination != null && !IsWithin(root, destination)) ||
                 (file != null && (!IsWithin(destination ?? root, file) || MatchesPath(destination ?? root, file) ||
-                    !IsVideoPath(file))) || (entry.State == HistoryState.Completed && file == null))
+                    !IsVideoPath(file))) || (entry.State == HistoryState.Completed && file == null) ||
+                (entry.State == HistoryState.AudioPending && (!entry.EnglishAudio || file == null)))
                 throw new ArgumentException("The download history contains an invalid video location.");
 
             string title = ShortText(entry.Title, 220);
@@ -204,7 +209,7 @@ namespace CustomYouTubeDownloader
                 StartedUtc = entry.StartedUtc.Kind == DateTimeKind.Unspecified ?
                     DateTime.SpecifyKind(entry.StartedUtc, DateTimeKind.Utc) : entry.StartedUtc.ToUniversalTime(),
                 State = entry.State, MaxHeight = entry.MaxHeight, CompatibleMp4 = entry.CompatibleMp4,
-                Captions = entry.Captions, PlaylistPosition = entry.PlaylistPosition
+                Captions = entry.Captions, EnglishAudio = entry.EnglishAudio, PlaylistPosition = entry.PlaylistPosition
             };
         }
 

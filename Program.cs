@@ -60,6 +60,16 @@ namespace CustomYouTubeDownloader
         private readonly ComboBox quality = CreateSelector("Video quality");
         private readonly ComboBox format = CreateSelector("Video format");
         private readonly ComboBox captions = CreateSelector("Subtitles");
+        private readonly CheckBox englishAudio = new CheckBox {
+            Text = "Add English audio (synthetic voice)", AccessibleName = "Add English audio",
+            AccessibleDescription = "Create a separate video with a spoken English track and the original audio.",
+            AutoSize = true, Anchor = AnchorStyles.Left, Margin = Padding.Empty, ForeColor = StudioTheme.Ink
+        };
+        private readonly NumericUpDown parallelDownloads = new NumericUpDown {
+            Minimum = 1, Maximum = AppPreferences.MaxParallelDownloads, Width = 54,
+            AccessibleName = "Simultaneous downloads", Anchor = AnchorStyles.Left,
+            TextAlign = HorizontalAlignment.Center, Margin = Padding.Empty
+        };
         private readonly Label hint = CreateLabel("", Secondary);
         private readonly Label status = CreateLabel("Ready to download", TextColor);
         private readonly Label detail = CreateLabel("Your download will appear in the folder you choose.", Secondary);
@@ -83,6 +93,7 @@ namespace CustomYouTubeDownloader
         private readonly Button libraryPlay = CreateButton("Play video", true);
         private readonly Button libraryFolder = CreateButton("Open location", false);
         private readonly Button libraryTranslate = CreateButton("Generate English subtitles", false);
+        private readonly Button libraryDub = CreateButton("Create English audio", false);
         private readonly Button libraryRefresh = CreateButton("Refresh", false);
         private readonly System.Windows.Forms.Timer searchTimer = new System.Windows.Forms.Timer { Interval = 260 };
         private readonly List<string> operationDetails = new List<string>();
@@ -125,6 +136,8 @@ namespace CustomYouTubeDownloader
             quality.SelectedIndex = preferences.Quality;
             format.SelectedIndex = preferences.Format;
             captions.SelectedIndex = preferences.Captions;
+            englishAudio.Checked = preferences.EnglishAudio;
+            parallelDownloads.Value = preferences.ParallelDownloads;
             url.Multiline = true;
             url.AcceptsReturn = true;
             url.ScrollBars = ScrollBars.Vertical;
@@ -346,7 +359,7 @@ namespace CustomYouTubeDownloader
             };
             AddWide(panel, libraryView, 2);
             AddWide(panel, libraryInfo, 3);
-            var actions = CollectionView.RowActions(libraryPlay, libraryFolder, libraryTranslate);
+            var actions = CollectionView.RowActions(libraryPlay, libraryFolder, libraryTranslate, libraryDub);
             AddWide(panel, actions, 4);
             actions.Visible = false;
             libraryPlay.Click += delegate {
@@ -360,6 +373,7 @@ namespace CustomYouTubeDownloader
                     OpenPath(Path.GetDirectoryName(video.FilePath), true);
             };
             libraryTranslate.Click += GenerateEnglishClicked;
+            libraryDub.Click += GenerateEnglishClicked;
             libraryRefresh.Click += delegate { RefreshLibrary(); };
             UpdateLibraryButtons();
             return panel;
@@ -473,10 +487,20 @@ namespace CustomYouTubeDownloader
 
         private void UpdateLibraryButtons()
         {
-            bool selected = SelectedVideo() != null;
+            var video = SelectedVideo();
+            bool selected = video != null;
             libraryPlay.Enabled = selected;
             libraryFolder.Enabled = selected;
             libraryTranslate.Enabled = selected && activeDownload == null;
+            libraryDub.Enabled = selected && activeDownload == null && CanDubVideo(video.FilePath);
+        }
+
+        private static bool CanDubVideo(string file)
+        {
+            var ext = Path.GetExtension(file);
+            return (String.Equals(ext, ".mp4", StringComparison.OrdinalIgnoreCase) ||
+                    String.Equals(ext, ".mkv", StringComparison.OrdinalIgnoreCase)) &&
+                !Path.GetFileNameWithoutExtension(file).EndsWith(EnglishDubWorker.Suffix, StringComparison.OrdinalIgnoreCase);
         }
 
         private async void GenerateEnglishClicked(object sender, EventArgs e)
@@ -484,23 +508,35 @@ namespace CustomYouTubeDownloader
             var video = SelectedVideo();
             if (video == null || activeDownload != null)
                 return;
-            var token = BeginOperation("Generating English subtitles");
-            IProgress<DownloadProgress> updates = new Progress<DownloadProgress>(UpdateProgress);
+            bool dub = sender == libraryDub;
+            var token = BeginOperation(dub ? "Creating English audio" : "Generating English subtitles");
+            IProgress<DownloadProgress> updates = new Progress<DownloadProgress>(update => {
+                if (activeDownload != null && activeDownload.Token == token)
+                    UpdateProgress(update);
+            });
             try
             {
+                if (dub)
+                {
+                    savedFile = await EnglishDubWorker.RunAsync(ToolsDirectory(), null, video.FilePath, updates.Report, token);
+                    operationDetails.Add("English audio saved in " + savedFile);
+                    SetStatus("English audio ready", Path.GetFileName(savedFile), false);
+                    FinishProgress(true);
+                    return;
+                }
                 var result = await CaptionWorker.RunAsync(ToolsDirectory(), null, video.FilePath, CaptionMode.English, updates.Report, token);
                 SetStatus(result.Count > 0 ? "English subtitles ready" : "No English subtitles saved", result.Message, result.Count == 0);
                 FinishProgress(result.Count > 0);
             }
             catch (OperationCanceledException)
             {
-                SetStatus("Subtitle generation cancelled", video.Name, false);
+                SetStatus(dub ? "English audio cancelled" : "Subtitle generation cancelled", video.Name, false);
                 FinishProgress(false);
             }
             catch (Exception ex)
             {
                 operationDetails.Add(ex.Message);
-                SetStatus("Couldn’t generate English subtitles", ex.Message, true);
+                SetStatus(dub ? "Couldn’t create English audio" : "Couldn’t generate English subtitles", ex.Message, true);
                 FinishProgress(false);
             }
             finally
@@ -529,6 +565,80 @@ namespace CustomYouTubeDownloader
             public readonly List<VideoJob> Videos = new List<VideoJob>();
             public int FailedPlaylists;
             public int UnavailableEntries;
+        }
+
+        private sealed class BatchProgress
+        {
+            private sealed class Activity
+            {
+                public string Stage;
+                public string Title;
+                public string Message;
+                public double? Percent;
+            }
+
+            private readonly DownloaderForm form;
+            private readonly int total;
+            private readonly CancellationToken token;
+            private readonly SortedDictionary<int, Activity> active = new SortedDictionary<int, Activity>();
+            private int finished;
+
+            public BatchProgress(DownloaderForm form, int total, CancellationToken token)
+            {
+                this.form = form;
+                this.total = total;
+                this.token = token;
+            }
+
+            public IProgress<DownloadProgress> Stage(int index, string title, string stage, string message)
+            {
+                var activity = new Activity { Title = title, Stage = stage, Message = message };
+                active[index] = activity;
+                Render();
+                return new Progress<DownloadProgress>(update => {
+                    Activity current;
+                    if (!active.TryGetValue(index, out current) || current != activity)
+                        return;
+                    activity.Message = update.Message;
+                    activity.Percent = update.Percent;
+                    Render();
+                });
+            }
+
+            public void LeaveStage(int index, bool complete)
+            {
+                active.Remove(index);
+                if (complete)
+                    finished++;
+                Render();
+            }
+
+            private void Render()
+            {
+                if (token.IsCancellationRequested || form.activeDownload == null || form.activeDownload.Token != token)
+                    return;
+                if (total == 1)
+                {
+                    foreach (var item in active.Values)
+                    {
+                        form.operationTitle = item.Stage + " · " + item.Title;
+                        form.UpdateProgress(new DownloadProgress { Message = item.Message, Percent = item.Percent });
+                    }
+                    return;
+                }
+                var stages = new List<string>();
+                foreach (var item in active)
+                {
+                    string state = item.Value.Stage;
+                    if (item.Value.Percent.HasValue)
+                        state += " " + Math.Max(0, Math.Min(100, item.Value.Percent.Value)).ToString("0") + "%";
+                    stages.Add("#" + (item.Key + 1) + " " + state);
+                }
+                form.bar.Style = ProgressBarStyle.Continuous;
+                form.bar.Value = 100 * finished / Math.Max(1, total);
+                form.SetStatus(finished + " of " + total + " processed · " + active.Count + " active",
+                    String.Join("   ·   ", stages.ToArray()), false);
+            }
         }
 
         private async Task<DownloadBatch> ExpandLinksAsync(List<DownloadLink> links, string root, string categoryName,
@@ -620,153 +730,235 @@ namespace CustomYouTubeDownloader
 
             SavePreferences(root);
             var token = BeginOperation("Preparing downloads");
-            IProgress<DownloadProgress> updates = new Progress<DownloadProgress>(UpdateProgress);
-            var captionMode = (CaptionMode)captions.SelectedIndex;
-            int maxHeight = QualityLimits[quality.SelectedIndex];
-            bool mp4 = format.SelectedIndex == 1;
-            string categoryName = category.Text;
-            string seriesName = series.Text;
-            int saved = 0;
-            int failed = 0;
-            int captionFiles = 0;
-            int captionWarnings = 0;
-            DownloadHistoryEntry current = null;
+            var totals = new BatchTotals();
+            bool expanding = true;
+            IProgress<DownloadProgress> updates = new Progress<DownloadProgress>(update => {
+                if (expanding && activeDownload != null && activeDownload.Token == token)
+                    UpdateProgress(update);
+            });
             try
             {
-                var batch = await ExpandLinksAsync(links, root, categoryName, seriesName, updates, token);
-                var jobs = batch.Videos;
-                for (int i = 0; i < jobs.Count; i++)
+                var batch = await ExpandLinksAsync(links, root, category.Text, series.Text, updates, token);
+                expanding = false;
+                var entries = new List<DownloadHistoryEntry>();
+                foreach (var job in batch.Videos)
                 {
-                    token.ThrowIfCancellationRequested();
-                    var job = jobs[i];
-                    string prefix = jobs.Count == 1 ? "Video" : "Video " + (i + 1) + " of " + jobs.Count;
                     string canonical = DownloadWorker.NormalizeVideoUrl(job.Url);
                     string playlistId = VideoLibrary.GetPlaylistId(job.Url);
-                    current = new DownloadHistoryEntry {
+                    entries.Add(new DownloadHistoryEntry {
                         Id = Guid.NewGuid().ToString("N"), Url = canonical,
                         GroupingUrl = playlistId == null ? canonical : canonical + "&list=" + playlistId,
                         Title = job.Title ?? "YouTube video · " + canonical.Substring(canonical.Length - 11),
-                        StartedUtc = DateTime.UtcNow, State = HistoryState.Running,
-                        Root = root, RequestedCategory = categoryName, RequestedSeries = seriesName,
+                        Root = root, RequestedCategory = category.Text, RequestedSeries = series.Text,
                         Destination = job.Destination == null ? null : job.Destination.DirectoryPath,
-                        PlaylistPosition = job.PlaylistPosition, MaxHeight = maxHeight, CompatibleMp4 = mp4, Captions = captionMode
-                    };
-                    try
-                    {
-                        var result = await DownloadAttemptAsync(current, prefix, updates, token);
-                        saved++;
-                        captionFiles += result.Count;
-                        if (result.MissingRequested)
-                            captionWarnings++;
-                    }
-                    catch (OperationCanceledException) { throw; }
-                    catch (Exception ex)
-                    {
-                        failed++;
-                        operationDetails.Add(prefix + " failed: " + ex.Message);
-                    }
-                    current = null;
+                        PlaylistPosition = job.PlaylistPosition, MaxHeight = QualityLimits[quality.SelectedIndex],
+                        CompatibleMp4 = format.SelectedIndex == 1, Captions = (CaptionMode)captions.SelectedIndex,
+                        EnglishAudio = englishAudio.Checked
+                    });
                 }
 
-                string summary = saved + (saved == 1 ? " video saved" : " videos saved");
-                if (captionMode != CaptionMode.None)
-                    summary += " · " + captionFiles + (captionFiles == 1 ? " subtitle file" : " subtitle files");
-                if (failed > 0)
-                    summary += " · " + failed + " failed";
+                await RunEntriesAsync(entries, (int)parallelDownloads.Value, totals, null, token);
+                string summary = totals.Saved + (totals.Saved == 1 ? " video saved" : " videos saved");
+                if (englishAudio.Checked)
+                    summary += " · " + totals.Dubbed + " with English audio";
+                if (captions.SelectedIndex != (int)CaptionMode.None)
+                    summary += " · " + totals.Subtitles + (totals.Subtitles == 1 ? " subtitle file" : " subtitle files");
+                if (totals.Failed > 0)
+                    summary += " · " + totals.Failed + " failed";
                 if (batch.UnavailableEntries > 0)
                     summary += " · " + batch.UnavailableEntries + " unavailable in playlists";
                 if (batch.FailedPlaylists > 0)
                     summary += " · " + batch.FailedPlaylists + (batch.FailedPlaylists == 1 ? " playlist couldn’t open" : " playlists couldn’t open");
-                if (captionWarnings > 0)
-                    summary += " · subtitle issues on " + captionWarnings;
-                SetStatus(saved > 0 ? "Ready to watch" : "No videos downloaded", summary + ".", saved == 0);
-                FinishProgress(saved > 0);
+                if (totals.SubtitleIssues > 0)
+                    summary += " · subtitle issues on " + totals.SubtitleIssues;
+                if (totals.AudioIssues > 0)
+                    summary += " · retry English audio for " + totals.AudioIssues + " in History";
+                SetStatus(totals.Saved > 0 ? "Downloads finished" : "No videos downloaded", summary + ".", totals.Saved == 0);
+                FinishProgress(totals.Saved > 0);
             }
             catch (OperationCanceledException)
             {
-                if (current != null && current.State == HistoryState.Completed)
-                    saved++;
-                SetStatus("Download cancelled", saved == 0 ? "No videos finished." : saved + " finished video(s) are in your library.", false);
+                SetStatus("Download cancelled", totals.Saved == 0 ? "No videos finished." :
+                    totals.Saved + " saved in your library" +
+                    (englishAudio.Checked ? " · " + totals.Dubbed + " with English audio." : "."), false);
+                FinishProgress(false);
+            }
+            catch (Exception ex)
+            {
+                operationDetails.Add(ex.Message);
+                SetStatus("Couldn’t finish this batch", ex.Message, true);
                 FinishProgress(false);
             }
             finally
             {
+                expanding = false;
                 EndOperation();
                 ScheduleLibraryRefresh();
             }
         }
 
-        private async Task<CaptionResult> DownloadAttemptAsync(DownloadHistoryEntry entry, string prefix,
-            IProgress<DownloadProgress> updates, CancellationToken token)
+        private sealed class BatchTotals
         {
+            public int Saved;
+            public int Failed;
+            public int Dubbed;
+            public int Subtitles;
+            public int SubtitleIssues;
+            public int AudioIssues;
+        }
+
+        // The runner and the continuations below stay on the UI context; only the media workers run off-thread.
+        private Task RunEntriesAsync(List<DownloadHistoryEntry> entries, int limit, BatchTotals totals,
+            string recoveredSource, CancellationToken token)
+        {
+            var keys = entries.ConvertAll(entry => entry.Url);
+            var progress = new BatchProgress(this, entries.Count, token);
+            return DownloadBatchRunner.RunAsync(keys, limit,
+                index => TransferEntryAsync(entries[index], index, recoveredSource, progress, totals, token),
+                index => FinishEntryAsync(entries[index], index, progress, totals, token), token);
+        }
+
+        private async Task<bool> TransferEntryAsync(DownloadHistoryEntry entry, int index, string recoveredSource,
+            BatchProgress display, BatchTotals totals, CancellationToken token)
+        {
+            entry.StartedUtc = DateTime.UtcNow;
+            entry.State = HistoryState.Running;
+            entry.FilePath = recoveredSource;
+            entry.Note = "Preparing download.";
             RecordAttempt(entry);
+            bool needsPostprocessing = false;
             try
             {
+                token.ThrowIfCancellationRequested();
                 if (String.IsNullOrWhiteSpace(entry.Destination))
                 {
-                    operationTitle = prefix + " · finding its category and series";
-                    SetStatus(operationTitle, "Preparing a folder for this video.", false);
+                    var updates = display.Stage(index, entry.Title, "Grouping", "Preparing the video folder.");
                     var destination = await VideoLibrary.ChooseDestinationAsync(ToolsDirectory(),
                         entry.GroupingUrl ?? entry.Url, entry.Root, entry.RequestedCategory, entry.RequestedSeries,
                         updates.Report, token);
                     if (!String.IsNullOrWhiteSpace(destination.Warning))
-                        operationDetails.Add(prefix + ": " + destination.Warning);
+                        operationDetails.Add(entry.Title + ": " + destination.Warning);
                     entry.Destination = destination.DirectoryPath;
                     RecordAttempt(entry);
                 }
                 string target = VideoLibrary.ValidateRetryDestination(entry.Root, entry.Destination);
-                operationTitle = prefix + " · downloading";
-                SetStatus(operationTitle, "Saving to " + target, false);
-                var result = await DownloadWorker.RunAsync(ToolsDirectory(), entry.Url, target,
-                    entry.MaxHeight, entry.CompatibleMp4, updates.Report, token, entry.PlaylistPosition);
-                savedFile = entry.FilePath = result.FilePath;
+                if (recoveredSource == null)
+                {
+                    var updates = display.Stage(index, entry.Title, "Downloading", "Saving to " + target);
+                    var result = await DownloadWorker.RunAsync(ToolsDirectory(), entry.Url, target,
+                        entry.MaxHeight, entry.CompatibleMp4, updates.Report, token, entry.PlaylistPosition);
+                    entry.FilePath = result.FilePath;
+                }
+                savedFile = entry.FilePath;
                 if (entry.Title.StartsWith("YouTube video · ", StringComparison.Ordinal))
-                    entry.Title = Path.GetFileNameWithoutExtension(savedFile);
-                entry.State = HistoryState.Completed;
-                entry.Note = "Video saved.";
-                operationDetails.Add("Saved " + Path.GetFileName(savedFile) + " in " + target + ".");
-                if (entry.Captions == CaptionMode.None)
-                    return new CaptionResult();
-
-                entry.Note = "Video saved. Subtitles may be incomplete.";
-                RecordAttempt(entry);
-                operationTitle = prefix + " · preparing subtitles";
-                SetStatus(operationTitle, Path.GetFileName(savedFile), false);
-                try
-                {
-                    var captions = await CaptionWorker.RunAsync(ToolsDirectory(), entry.Url, savedFile,
-                        entry.Captions, updates.Report, token);
-                    entry.Note = captions.MissingRequested ? "Video saved. Some requested subtitles were unavailable." :
-                        "Video and requested subtitles saved.";
-                    operationDetails.Add(captions.Message);
-                    return captions;
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
-                {
-                    entry.Note = "Video saved. Subtitles could not be prepared.";
-                    operationDetails.Add(prefix + " subtitle issue: " + ex.Message);
-                    return new CaptionResult { MissingRequested = true };
-                }
+                    entry.Title = Path.GetFileNameWithoutExtension(entry.FilePath);
+                totals.Saved++;
+                operationDetails.Add((recoveredSource == null ? "Saved " : "Using saved original ") +
+                    Path.GetFileName(entry.FilePath) + " in " + target + ".");
+                needsPostprocessing = entry.EnglishAudio || entry.Captions != CaptionMode.None;
+                entry.State = entry.EnglishAudio ? HistoryState.Running : HistoryState.Completed;
+                entry.Note = entry.EnglishAudio ? "Original saved. English audio is pending." :
+                    needsPostprocessing ? "Video saved. Subtitles may be incomplete." : "Video saved.";
+                return needsPostprocessing;
             }
             catch (OperationCanceledException)
             {
-                if (entry.State == HistoryState.Completed)
-                    entry.Note = "Video saved. Subtitle processing was cancelled.";
-                else
-                {
-                    entry.State = HistoryState.Cancelled;
-                    entry.Note = "Cancelled. Retry to try this video again.";
-                }
+                MarkCancelled(entry);
                 throw;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 entry.State = HistoryState.Failed;
-                entry.Note = "The video could not be saved. Retry uses the same settings.";
+                entry.Note = "Download failed. " + ex.Message;
+                totals.Failed++;
+                operationDetails.Add(entry.Title + ": " + entry.Note);
+                return false;
+            }
+            finally
+            {
+                RecordAttempt(entry);
+                display.LeaveStage(index, !needsPostprocessing);
+            }
+        }
+
+        private async Task FinishEntryAsync(DownloadHistoryEntry entry, int index, BatchProgress display,
+            BatchTotals totals, CancellationToken token)
+        {
+            string sourceFile = entry.FilePath;
+            bool subtitleIssue = false;
+            try
+            {
+                token.ThrowIfCancellationRequested();
+                if (entry.Captions != CaptionMode.None)
+                {
+                    var updates = display.Stage(index, entry.Title, "Subtitles", Path.GetFileName(sourceFile));
+                    try
+                    {
+                        var result = await CaptionWorker.RunAsync(ToolsDirectory(), entry.Url, sourceFile,
+                            entry.Captions, updates.Report, token);
+                        totals.Subtitles += result.Count;
+                        subtitleIssue = result.MissingRequested;
+                        operationDetails.Add(entry.Title + ": " + result.Message);
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        subtitleIssue = true;
+                        operationDetails.Add(entry.Title + " subtitle issue: " + ex.Message);
+                    }
+                    if (subtitleIssue)
+                        totals.SubtitleIssues++;
+                }
+                if (entry.EnglishAudio)
+                {
+                    var updates = display.Stage(index, entry.Title, "English audio", Path.GetFileName(sourceFile));
+                    string dubbed = await EnglishDubWorker.RunAsync(ToolsDirectory(), entry.Url, sourceFile,
+                        updates.Report, token);
+                    entry.FilePath = savedFile = dubbed;
+                    totals.Dubbed++;
+                    operationDetails.Add("English audio ready: " + Path.GetFileName(dubbed));
+                }
+                entry.State = HistoryState.Completed;
+                entry.Note = entry.EnglishAudio ? "Video with English audio saved." : "Video saved.";
+                if (entry.Captions != CaptionMode.None)
+                    entry.Note += subtitleIssue ? " Some requested subtitles were unavailable." : " Requested subtitles are ready.";
+            }
+            catch (OperationCanceledException)
+            {
+                MarkCancelled(entry);
                 throw;
             }
-            finally { RecordAttempt(entry); }
+            catch (Exception ex)
+            {
+                entry.State = HistoryState.AudioPending;
+                entry.Note = "Original saved. English audio could not be prepared. " + ex.Message;
+                operationDetails.Add(entry.Title + ": " + entry.Note);
+                totals.AudioIssues++;
+            }
+            finally
+            {
+                RecordAttempt(entry);
+                display.LeaveStage(index, true);
+            }
+        }
+
+        private static void MarkCancelled(DownloadHistoryEntry entry)
+        {
+            if (String.IsNullOrEmpty(entry.FilePath))
+            {
+                entry.State = HistoryState.Cancelled;
+                entry.Note = "Cancelled. Retry to download this video.";
+            }
+            else if (entry.EnglishAudio)
+            {
+                entry.State = HistoryState.AudioPending;
+                entry.Note = "Original saved. Retry English audio to finish this video.";
+            }
+            else
+            {
+                entry.State = HistoryState.Completed;
+                entry.Note = "Video saved. Subtitle processing was cancelled.";
+            }
         }
 
         private void RecordAttempt(DownloadHistoryEntry entry)
@@ -793,17 +985,15 @@ namespace CustomYouTubeDownloader
         {
             if (activeDownload != null)
                 return;
+            string original = entry.State == HistoryState.AudioPending ? HistoryPanel.VideoFile(entry) : null;
             var token = BeginOperation("Retrying video");
-            IProgress<DownloadProgress> updates = new Progress<DownloadProgress>(UpdateProgress);
-            entry.State = HistoryState.Running;
-            entry.StartedUtc = DateTime.UtcNow;
-            entry.FilePath = null;
-            entry.Note = "Retry started.";
             try
             {
-                var captions = await DownloadAttemptAsync(entry, "Retry", updates, token);
-                SetStatus("Ready to watch", captions.MissingRequested ? entry.Note : Path.GetFileName(entry.FilePath), false);
-                FinishProgress(true);
+                await RunEntriesAsync(new List<DownloadHistoryEntry> { entry }, 1, new BatchTotals(), original, token);
+                bool complete = entry.State == HistoryState.Completed;
+                SetStatus(complete ? "Ready to watch" : entry.State == HistoryState.AudioPending ?
+                    "English audio needs attention" : "Download failed", entry.Note, !complete);
+                FinishProgress(complete);
             }
             catch (OperationCanceledException)
             {
@@ -943,6 +1133,8 @@ namespace CustomYouTubeDownloader
             quality.Enabled = !working;
             format.Enabled = !working;
             captions.Enabled = !working;
+            englishAudio.Enabled = !working;
+            parallelDownloads.Enabled = !working;
             category.Enabled = !working;
             series.Enabled = !working;
             cancel.Enabled = working;
@@ -1080,6 +1272,8 @@ namespace CustomYouTubeDownloader
             preferences.Quality = quality.SelectedIndex;
             preferences.Format = format.SelectedIndex;
             preferences.Captions = captions.SelectedIndex;
+            preferences.EnglishAudio = englishAudio.Checked;
+            preferences.ParallelDownloads = Decimal.ToInt32(parallelDownloads.Value);
             preferences.Save();
         }
 

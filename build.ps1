@@ -12,6 +12,9 @@ if (!(Test-Path -LiteralPath $compiler -PathType Leaf)) {
 $output = [IO.Path]::GetFullPath($OutputPath)
 $mainSource = Join-Path $PSScriptRoot 'Program.cs'
 $workerSource = Join-Path $PSScriptRoot 'DownloadWorker.cs'
+$batchSource = Join-Path $PSScriptRoot 'DownloadBatchRunner.cs'
+$dubSource = Join-Path $PSScriptRoot 'EnglishDubWorker.cs'
+$speech = Join-Path (Split-Path $compiler) 'WPF\System.Speech.dll'
 $captionSource = Join-Path $PSScriptRoot 'CaptionWorker.cs'
 $librarySource = Join-Path $PSScriptRoot 'VideoLibrary.cs'
 $playlistSource = Join-Path $PSScriptRoot 'PlaylistWorker.cs'
@@ -27,7 +30,7 @@ $studioSources = @('StudioTheme.cs', 'StudioShell.cs', 'DownloadWorkspace.cs', '
 $film = Join-Path $PSScriptRoot 'assets\film-reel.jpg'
 $icon = Join-Path $PSScriptRoot 'assets\app-icon.ico'
 $manifest = Join-Path $PSScriptRoot 'app.manifest'
-& $compiler /nologo /target:winexe /platform:anycpu /optimize+ /codepage:65001 "/out:$output" "/win32icon:$icon" "/win32manifest:$manifest" "/resource:$icon,CustomYouTubeDownloader.AppIcon.ico" "/resource:$film,CustomYouTubeDownloader.Film.jpg" /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll $mainSource $workerSource $captionSource $librarySource $playlistSource $catalogSource $discoverySource $preferencesSource $watchlistSource $historySource $historyPanelSource $identitySource @studioSources
+& $compiler /nologo /target:winexe /platform:anycpu /optimize+ /codepage:65001 "/out:$output" "/win32icon:$icon" "/win32manifest:$manifest" "/resource:$icon,CustomYouTubeDownloader.AppIcon.ico" "/resource:$film,CustomYouTubeDownloader.Film.jpg" /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll "/r:$speech" $mainSource $workerSource $batchSource $dubSource $captionSource $librarySource $playlistSource $catalogSource $discoverySource $preferencesSource $watchlistSource $historySource $historyPanelSource $identitySource @studioSources
 if ($LASTEXITCODE -ne 0) { throw 'The application could not be built.' }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'App.config') -Destination "$output.config" -Force
 Get-Item -LiteralPath $output

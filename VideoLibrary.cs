@@ -496,7 +496,9 @@ namespace CustomYouTubeDownloader
                 PartialVideo.IsMatch(file.Name) || file.Length == 0)
                 return null;
             string stem = Path.GetFileNameWithoutExtension(file.Name);
-            string title = DownloadName.Replace(stem, "$1");
+            bool dub = stem.EndsWith(EnglishDubWorker.Suffix, StringComparison.OrdinalIgnoreCase);
+            string sourceStem = dub ? stem.Substring(0, stem.Length - EnglishDubWorker.Suffix.Length) : stem;
+            string title = DownloadName.Replace(sourceStem, "$1") + (dub ? EnglishDubWorker.Suffix : "");
             string searchable = title + "\n" + folder.Category + "\n" + folder.Series;
             if (!words.All(word => searchable.IndexOf(word, StringComparison.OrdinalIgnoreCase) >= 0))
                 return null;
@@ -507,7 +509,7 @@ namespace CustomYouTubeDownloader
                 Series = folder.Series,
                 FilePath = file.FullName,
                 ModifiedAt = file.LastWriteTime,
-                HasCaptions = subtitles.ContainsKey(stem)
+                HasCaptions = subtitles.ContainsKey(stem) || (dub && subtitles.ContainsKey(sourceStem))
             };
         }
 

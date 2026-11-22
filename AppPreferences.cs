@@ -22,6 +22,11 @@ namespace CustomYouTubeDownloader
         public int Quality;
         public int Format;
         public int Captions;
+        public bool EnglishAudio;
+        public int ParallelDownloads = DefaultParallelDownloads;
+
+        internal const int DefaultParallelDownloads = 3;
+        internal const int MaxParallelDownloads = 4;
 
         internal static string DefaultFolder
         {
@@ -65,6 +70,12 @@ namespace CustomYouTubeDownloader
                 preferences.Quality = ReadIndex(values, "quality", 5, 0);
                 preferences.Format = ReadIndex(values, "format", 2, 0);
                 preferences.Captions = ReadIndex(values, "captions", 4, 1);
+                object englishAudio;
+                preferences.EnglishAudio = values.TryGetValue("englishAudio", out englishAudio) &&
+                    englishAudio is bool && (bool)englishAudio;
+                object parallelDownloads;
+                if (values.TryGetValue("parallelDownloads", out parallelDownloads) && parallelDownloads is int)
+                    preferences.ParallelDownloads = ValidParallelDownloads((int)parallelDownloads);
                 return preferences;
             }
         }
@@ -82,7 +93,9 @@ namespace CustomYouTubeDownloader
                         { "country", NormalizeCountry(CountryCode) },
                         { "quality", ValidIndex(Quality, 5, 0) },
                         { "format", ValidIndex(Format, 2, 0) },
-                        { "captions", ValidIndex(Captions, 4, 1) }
+                        { "captions", ValidIndex(Captions, 4, 1) },
+                        { "englishAudio", EnglishAudio },
+                        { "parallelDownloads", ValidParallelDownloads(ParallelDownloads) }
                     };
                     Directory.CreateDirectory(settingsDirectory);
                     byte[] data = Encoding.UTF8.GetBytes(CreateSerializer().Serialize(values));
@@ -124,7 +137,8 @@ namespace CustomYouTubeDownloader
             {
                 var values = CreateSerializer().DeserializeObject(json) as Dictionary<string, object>;
                 if (values == null || (!values.ContainsKey("folder") && !values.ContainsKey("country") &&
-                    !values.ContainsKey("quality") && !values.ContainsKey("format") && !values.ContainsKey("captions")))
+                    !values.ContainsKey("quality") && !values.ContainsKey("format") && !values.ContainsKey("captions") &&
+                    !values.ContainsKey("englishAudio") && !values.ContainsKey("parallelDownloads")))
                     return null;
                 return values;
             }
@@ -169,6 +183,11 @@ namespace CustomYouTubeDownloader
         private static int ValidIndex(int value, int count, int fallback)
         {
             return value >= 0 && value < count ? value : fallback;
+        }
+
+        private static int ValidParallelDownloads(int value)
+        {
+            return value >= 1 && value <= MaxParallelDownloads ? value : DefaultParallelDownloads;
         }
 
         private static string NormalizeCountry(string value)

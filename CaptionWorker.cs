@@ -367,13 +367,13 @@ namespace CustomYouTubeDownloader
             return staged;
         }
 
-        private sealed class ProcessOutput
+        internal sealed class ProcessOutput
         {
             public int ExitCode;
             public string Readout;
         }
 
-        private static ProcessOutput RunProcess(string file, IEnumerable<string> args, string workingDirectory,
+        internal static ProcessOutput RunProcess(string file, IEnumerable<string> args, string workingDirectory,
             CancellationToken token, Action<string> onLine)
         {
             using (var process = new Process {
